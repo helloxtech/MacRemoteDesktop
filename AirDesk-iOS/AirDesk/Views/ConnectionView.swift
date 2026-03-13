@@ -30,9 +30,17 @@ struct ConnectionView: View {
 
                         // Discovered Macs
                         VStack(alignment: .leading, spacing: 12) {
-                            Label("Nearby Macs", systemImage: "wifi")
-                                .font(.headline)
-                                .padding(.horizontal, 4)
+                            HStack {
+                                Label("Nearby Macs", systemImage: "wifi")
+                                    .font(.headline)
+                                Spacer()
+                                Button(action: { appState.startDiscovery() }) {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.subheadline)
+                                        .foregroundColor(.blue)
+                                }
+                            }
+                            .padding(.horizontal, 4)
 
                             if appState.discoveredHosts.isEmpty {
                                 HStack {

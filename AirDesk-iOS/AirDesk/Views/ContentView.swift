@@ -14,7 +14,7 @@ struct ContentView: View {
                 RemoteDesktopView()
             }
         }
-        .animation(.easeInOut(duration: 0.3), value: appState.connectionState == .connected)
+        .animation(.easeInOut(duration: 0.3), value: appState.connectionState)
     }
 }
 

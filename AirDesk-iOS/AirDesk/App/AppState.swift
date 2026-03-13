@@ -2,7 +2,7 @@ import Foundation
 import Combine
 import UIKit
 
-enum ConnectionState {
+enum ConnectionState: Equatable {
     case disconnected
     case connecting
     case connected
@@ -33,6 +33,8 @@ class AppState: ObservableObject {
     private var fpsWindowStart = Date()
 
     func startDiscovery() {
+        discovery?.stop()
+        discoveredHosts = []
         let d = BonjourDiscovery()
         d.hostsUpdated = { [weak self] hosts in
             Task { @MainActor in self?.discoveredHosts = hosts }
@@ -95,6 +97,7 @@ class AppState: ObservableObject {
         decodedFPS = 0
         frameUpdateHandlers.removeAll()
         videoDecoders.removeAll()
+        startDiscovery()  // restart scan so the list is fresh when returning to ConnectionView
     }
 
     func selectMonitor(_ index: Int) {

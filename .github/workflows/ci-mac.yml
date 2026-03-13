@@ -1,0 +1,49 @@
+name: CI — Mac App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'AirDesk-Mac/**'
+      - '.github/workflows/ci-mac.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'AirDesk-Mac/**'
+
+jobs:
+  build:
+    name: Build Mac App
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode Project
+        working-directory: AirDesk-Mac
+        run: xcodegen generate
+
+      - name: Build
+        working-directory: AirDesk-Mac
+        run: |
+          xcodebuild \
+            -project AirDesk-Mac.xcodeproj \
+            -scheme AirDesk \
+            -configuration Debug \
+            -sdk macosx \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build | xcpretty --color || exit 1
+
+      - name: Swift Build (SPM fallback)
+        working-directory: AirDesk-Mac
+        if: failure()
+        run: swift build

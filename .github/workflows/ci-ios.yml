@@ -1,0 +1,45 @@
+name: CI — iOS App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'AirDesk-iOS/**'
+      - '.github/workflows/ci-ios.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'AirDesk-iOS/**'
+
+jobs:
+  build:
+    name: Build iOS App
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode Project
+        working-directory: AirDesk-iOS
+        run: xcodegen generate
+
+      - name: Build for Simulator
+        working-directory: AirDesk-iOS
+        run: |
+          xcodebuild \
+            -project AirDesk.xcodeproj \
+            -scheme AirDesk \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build | xcpretty --color || exit 1

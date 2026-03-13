@@ -17,80 +17,80 @@ class TouchInputMapper {
     }
 
     func handleTap(at point: CGPoint, in viewSize: CGSize) {
-        let normalized = normalizePoint(point, viewSize: viewSize)
-        let msg = MouseMessage(x: Float(normalized.x), y: Float(normalized.y), action: "click", displayIndex: activeDisplayIndex)
-        client?.sendMouseMessage(msg)
+        let n = normalizePoint(point, viewSize: viewSize)
+        send(MouseMessage(x: Float(n.x), y: Float(n.y), action: "click", displayIndex: activeDisplayIndex))
     }
 
     func handleLongPress(at point: CGPoint, in viewSize: CGSize) {
-        let normalized = normalizePoint(point, viewSize: viewSize)
-        let msg = MouseMessage(x: Float(normalized.x), y: Float(normalized.y), action: "rightClick", displayIndex: activeDisplayIndex)
-        client?.sendMouseMessage(msg)
+        let n = normalizePoint(point, viewSize: viewSize)
+        send(MouseMessage(x: Float(n.x), y: Float(n.y), action: "rightClick", displayIndex: activeDisplayIndex))
     }
 
     func handleDragBegan(at point: CGPoint, in viewSize: CGSize) {
         isDragging = true
-        let normalized = normalizePoint(point, viewSize: viewSize)
-        let msg = MouseMessage(x: Float(normalized.x), y: Float(normalized.y), action: "drag", displayIndex: activeDisplayIndex)
-        client?.sendMouseMessage(msg)
+        let n = normalizePoint(point, viewSize: viewSize)
+        // mouseDown to begin the drag
+        send(MouseMessage(x: Float(n.x), y: Float(n.y), action: "drag", displayIndex: activeDisplayIndex))
     }
 
     func handleDragChanged(to point: CGPoint, in viewSize: CGSize) {
         guard isDragging else { return }
-        let normalized = normalizePoint(point, viewSize: viewSize)
-        let msg = MouseMessage(x: Float(normalized.x), y: Float(normalized.y), action: "move", displayIndex: activeDisplayIndex)
-        client?.sendMouseMessage(msg)
+        let n = normalizePoint(point, viewSize: viewSize)
+        // Use "mouseDrag" so InputInjector sends leftMouseDragged (not mouseMoved)
+        send(MouseMessage(x: Float(n.x), y: Float(n.y), action: "mouseDrag", displayIndex: activeDisplayIndex))
     }
 
     func handleDragEnded(at point: CGPoint, in viewSize: CGSize) {
         isDragging = false
-        let normalized = normalizePoint(point, viewSize: viewSize)
-        let msg = MouseMessage(x: Float(normalized.x), y: Float(normalized.y), action: "dragEnd", displayIndex: activeDisplayIndex)
-        client?.sendMouseMessage(msg)
+        let n = normalizePoint(point, viewSize: viewSize)
+        send(MouseMessage(x: Float(n.x), y: Float(n.y), action: "dragEnd", displayIndex: activeDisplayIndex))
     }
 
     func handleScroll(deltaX: CGFloat, deltaY: CGFloat, at point: CGPoint, in viewSize: CGSize) {
-        let normalized = normalizePoint(point, viewSize: viewSize)
-        let msg = MouseMessage(
-            x: Float(normalized.x), y: Float(normalized.y),
+        let n = normalizePoint(point, viewSize: viewSize)
+        // Negate deltaY: iOS Y increases downward, macOS scroll positive = up
+        // Multiply for comfortable scroll speed
+        send(MouseMessage(
+            x: Float(n.x), y: Float(n.y),
             action: "scroll",
             displayIndex: activeDisplayIndex,
-            scrollDeltaX: Float(deltaX * 3),
-            scrollDeltaY: Float(deltaY * 3)
-        )
-        client?.sendMouseMessage(msg)
+            scrollDeltaX: Float(deltaX * 0.03),
+            scrollDeltaY: Float(-deltaY * 0.03)   // negated
+        ))
     }
 
-    /// Converts a touch point in the view to normalized Mac coordinates (0.0-1.0),
-    /// accounting for letterboxing based on the monitor's aspect ratio.
+    /// Maps a touch in the view to normalized Mac coordinates (0–1),
+    /// correctly accounting for letterbox/pillarbox based on monitor aspect ratio.
     private func normalizePoint(_ point: CGPoint, viewSize: CGSize) -> CGPoint {
-        guard let monitor = monitor else {
+        guard let monitor else {
             return CGPoint(x: point.x / viewSize.width, y: point.y / viewSize.height)
         }
 
         let monitorAspect = CGFloat(monitor.width) / CGFloat(monitor.height)
         let viewAspect = viewSize.width / viewSize.height
-
         let (contentWidth, contentHeight, offsetX, offsetY): (CGFloat, CGFloat, CGFloat, CGFloat)
+
         if viewAspect > monitorAspect {
-            // Pillarbox — black bars on sides
+            // Pillarbox — black bars left and right
             contentHeight = viewSize.height
             contentWidth = contentHeight * monitorAspect
             offsetX = (viewSize.width - contentWidth) / 2
             offsetY = 0
         } else {
-            // Letterbox — black bars on top/bottom
+            // Letterbox — black bars top and bottom
             contentWidth = viewSize.width
             contentHeight = contentWidth / monitorAspect
             offsetX = 0
             offsetY = (viewSize.height - contentHeight) / 2
         }
 
-        let relX = (point.x - offsetX) / contentWidth
-        let relY = (point.y - offsetY) / contentHeight
         return CGPoint(
-            x: max(0, min(1, relX)),
-            y: max(0, min(1, relY))
+            x: max(0, min(1, (point.x - offsetX) / contentWidth)),
+            y: max(0, min(1, (point.y - offsetY) / contentHeight))
         )
+    }
+
+    private func send(_ msg: MouseMessage) {
+        client?.sendMouseMessage(msg)
     }
 }

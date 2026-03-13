@@ -89,3 +89,8 @@ struct KeyboardMessage: Codable {
         self.action = action
     }
 }
+
+struct ClipboardMessage: Codable {
+    let type: String
+    let content: String
+}

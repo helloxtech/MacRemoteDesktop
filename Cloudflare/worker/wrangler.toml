@@ -1,0 +1,12 @@
+name = "airdesk-relay"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "AirDeskRelay"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["AirDeskRelay"]

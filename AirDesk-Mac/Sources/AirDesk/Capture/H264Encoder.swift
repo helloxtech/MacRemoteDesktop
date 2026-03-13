@@ -36,8 +36,12 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
         }
 
         VTCompressionSessionEncodeFrame(session, imageBuffer: pixelBuffer, presentationTimeStamp: presentationTime, duration: .invalid, frameProperties: frameProperties, infoFlagsOut: nil) { [weak self] status, flags, sampleBuffer in
-            guard status == noErr, let sampleBuffer = sampleBuffer else { return }
-            self?.handleEncodedFrame(sampleBuffer, displayIndex: displayIndex, isKeyframe: forceKeyframe)
+            guard status == noErr, let sampleBuffer else { return }
+            // Read actual keyframe status from the sample buffer attachment instead of relying
+            // on forceKeyframe — VT may produce a keyframe on its own (first frame, resolution change)
+            let notSync = CMGetAttachment(sampleBuffer, key: kCMSampleAttachmentKey_NotSync, attachmentModeOut: nil) as? Bool
+            let isActualKeyframe = !(notSync ?? false)
+            self?.handleEncodedFrame(sampleBuffer, displayIndex: displayIndex, isKeyframe: isActualKeyframe)
         }
     }
 

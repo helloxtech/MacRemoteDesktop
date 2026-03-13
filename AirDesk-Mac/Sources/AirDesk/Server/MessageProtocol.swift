@@ -27,6 +27,7 @@ enum IncomingMessage {
     case requestStream(RequestStreamMessage)
     case mouse(MouseMessage)
     case keyboard(KeyboardMessage)
+    case clipboard(ClipboardMessage)
     case unknown
 }
 
@@ -58,6 +59,11 @@ struct KeyboardMessage: Codable {
     let keyCode: Int
     let modifiers: [String]
     let action: String      // "down", "up"
+}
+
+struct ClipboardMessage: Codable {
+    let type: String   // "clipboard_changed" (Mac→iOS) or "clipboard_push" (iOS→Mac)
+    let content: String
 }
 
 // MARK: - Binary Video Frame Header
@@ -102,6 +108,8 @@ func parseIncomingMessage(_ text: String) -> IncomingMessage {
         if let msg = try? decoder.decode(MouseMessage.self, from: msgData) { return .mouse(msg) }
     case "key":
         if let msg = try? decoder.decode(KeyboardMessage.self, from: msgData) { return .keyboard(msg) }
+    case "clipboard_push":
+        if let msg = try? decoder.decode(ClipboardMessage.self, from: msgData) { return .clipboard(msg) }
     default:
         break
     }

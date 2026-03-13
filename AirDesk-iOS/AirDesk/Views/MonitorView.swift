@@ -12,19 +12,16 @@ struct MonitorView: UIViewControllerRepresentable {
         if let client = appState.webSocketClient {
             vc.configure(client: client)
         }
-        appState.frameUpdateHandler = { pixelBuffer, idx in
-            if idx == displayIndex {
-                vc.updateFrame(pixelBuffer)
-            }
+        // Use per-display handler — fixes multi-monitor overwrite bug
+        appState.registerFrameHandler(displayIndex: displayIndex) { pixelBuffer in
+            vc.updateFrame(pixelBuffer)
         }
         return vc
     }
 
     func updateUIViewController(_ vc: MonitorViewController, context: Context) {
-        appState.frameUpdateHandler = { pixelBuffer, idx in
-            if idx == displayIndex {
-                vc.updateFrame(pixelBuffer)
-            }
+        appState.registerFrameHandler(displayIndex: displayIndex) { pixelBuffer in
+            vc.updateFrame(pixelBuffer)
         }
     }
 }

@@ -3,6 +3,7 @@ import SwiftUI
 struct RemoteDesktopView: View {
     @EnvironmentObject var appState: AppState
     @State private var showMonitorPicker = false
+    @State private var keyboardVisible = false
 
     var body: some View {
         ZStack {
@@ -51,19 +52,30 @@ struct RemoteDesktopView: View {
 
                     Spacer()
 
-                    // Latency badge
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 7, height: 7)
-                        Text("Local")
-                            .font(.caption.weight(.medium))
-                            .foregroundColor(.white)
+                    // Keyboard toggle
+                    Button(action: { keyboardVisible.toggle() }) {
+                        Image(systemName: "keyboard")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(keyboardVisible ? .yellow : .white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(20)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(20)
+
+                    // Paste to Mac
+                    Button(action: { appState.pushClipboardToMac() }) {
+                        Image(systemName: "doc.on.clipboard")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(20)
+                    }
+
+                    // Latency badge
+                    LatencyBadge(ms: appState.latencyMs)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
@@ -86,6 +98,10 @@ struct RemoteDesktopView: View {
                 }
             }
         }
+        .overlay(
+            KeyboardInputView(isActive: $keyboardVisible, client: appState.webSocketClient)
+                .frame(width: 0, height: 0)
+        )
         .statusBar(hidden: true)
         .persistentSystemOverlays(.hidden)
     }
@@ -94,5 +110,36 @@ struct RemoteDesktopView: View {
 extension Array {
     subscript(safe index: Int) -> Element? {
         indices.contains(index) ? self[index] : nil
+    }
+}
+
+private struct LatencyBadge: View {
+    let ms: Int
+
+    private var color: Color {
+        if ms == 0 { return .green }
+        if ms < 50 { return .green }
+        if ms < 150 { return .yellow }
+        return .red
+    }
+
+    private var label: String {
+        ms == 0 ? "—" : "\(ms)ms"
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text(label)
+                .font(.caption.weight(.medium))
+                .foregroundColor(.white)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial)
+        .cornerRadius(20)
+        .animation(.easeInOut(duration: 0.3), value: ms)
     }
 }

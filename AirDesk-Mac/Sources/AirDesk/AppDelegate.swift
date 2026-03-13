@@ -10,6 +10,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var inputInjector: InputInjector!
     private var bonjourAdvertiser: BonjourAdvertiser!
     private var cloudflareTunnelManager: CloudflareTunnelManager!
+    private var clipboardManager: ClipboardManager!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         PermissionChecker.requestPermissionsIfNeeded()
@@ -20,16 +21,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         screenCaptureManager = ScreenCaptureManager()
         bonjourAdvertiser = BonjourAdvertiser(port: 7890)
         cloudflareTunnelManager = CloudflareTunnelManager()
-        bonjourAdvertiser.start()
+        clipboardManager = ClipboardManager()
+
+        // Bonjour is started only when the user enables sharing (inside StatusBarController)
         statusBarController = StatusBarController(
             server: webSocketServer,
             tunnel: cloudflareTunnelManager,
-            capture: screenCaptureManager
+            capture: screenCaptureManager,
+            bonjour: bonjourAdvertiser,
+            clipboard: clipboardManager
         )
 
         h264Encoder.delegate = webSocketServer
         screenCaptureManager.delegate = h264Encoder
         webSocketServer.inputDelegate = inputInjector
+        webSocketServer.clipboardDelegate = clipboardManager
         webSocketServer.monitorInfoProvider = { [weak self] in
             self?.screenCaptureManager.monitorInfos ?? []
         }
@@ -38,6 +44,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.statusBarController.updateClientCount(count)
             }
         }
+        clipboardManager.server = webSocketServer
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -45,5 +52,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         webSocketServer.stop()
         bonjourAdvertiser.stop()
         cloudflareTunnelManager.stop()
+        clipboardManager.stop()
     }
 }

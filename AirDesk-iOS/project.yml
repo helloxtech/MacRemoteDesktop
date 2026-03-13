@@ -12,6 +12,7 @@ targets:
     platform: iOS
     sources:
       - path: AirDesk
+      - path: AirDesk/Assets.xcassets
     info:
       path: AirDesk/Info.plist
     settings:

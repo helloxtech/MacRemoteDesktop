@@ -25,6 +25,10 @@ class InputInjector: NSObject {
 
         case "drag":
             postMouseEvent(type: .leftMouseDown, point: point, button: .left)
+
+        case "mouseDrag":
+            // Intermediate drag position — must use leftMouseDragged (not mouseMoved)
+            // so macOS window dragging and selection work correctly
             postMouseEvent(type: .leftMouseDragged, point: point, button: .left)
 
         case "dragEnd":

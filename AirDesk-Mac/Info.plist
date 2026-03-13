@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>AirDesk</string>
+    <key>CFBundleDisplayName</key>
+    <string>AirDesk</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.helloxtech.airdesk.mac</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>AirDesk needs Screen Recording permission to share your display with your iPhone or iPad.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>AirDesk needs Accessibility permission to inject mouse and keyboard events for remote control.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>AirDesk uses the local network to communicate with the AirDesk iOS app.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_airdesk._tcp</string>
+    </array>
+</dict>
+</plist>

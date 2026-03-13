@@ -1,0 +1,33 @@
+# macOS
+.DS_Store
+*.DS_Store
+
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcworkspace/contents.xcworkspacedata
+DerivedData/
+build/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# CocoaPods
+Pods/
+
+# Xcode generated (XcodeGen output)
+*.xcodeproj
+!*.xcodeproj/project.pbxproj
+
+# Secrets
+*.env
+secrets.json
+cloudflare-credentials.json
+
+# Node (for wrangler)
+node_modules/
+dist/

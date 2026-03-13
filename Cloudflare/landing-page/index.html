@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AirDesk — Your Mac. In Your Hands.</title>
+  <meta name="description" content="The remote desktop app that actually feels good to use. Direct touch control, multi-monitor support, and automatic Mac discovery over WiFi." />
+  <meta property="og:title" content="AirDesk — Your Mac. In Your Hands." />
+  <meta property="og:description" content="The remote desktop app that actually feels good to use." />
+  <meta property="og:type" content="website" />
+  <meta name="theme-color" content="#0a0a0f" />
+
+  <style>
+    /* ─── Reset & Base ─────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0a0a0f;
+      --bg-mid:      #0f0f1a;
+      --bg-card:     rgba(255,255,255,0.04);
+      --border:      rgba(255,255,255,0.08);
+      --accent:      #0A84FF;
+      --accent-glow: rgba(10,132,255,0.35);
+      --accent-dim:  rgba(10,132,255,0.15);
+      --text:        #f0f0f5;
+      --text-mid:    #9898aa;
+      --text-dim:    #55556a;
+      --radius-lg:   20px;
+      --radius-sm:   12px;
+      --font:        system-ui, -apple-system, "SF Pro Display", "Segoe UI", sans-serif;
+      --transition:  0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* ─── Noise texture overlay ────────────────────────────────────────── */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.6;
+    }
+
+    /* ─── Nav ──────────────────────────────────────────────────────────── */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 clamp(1.5rem, 5vw, 4rem);
+      height: 64px;
+      background: rgba(10,10,15,0.7);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      text-decoration: none;
+      color: var(--text);
+    }
+
+    .nav-logo-icon {
+      width: 32px; height: 32px;
+      background: linear-gradient(135deg, #0A84FF 0%, #5E5CE6 100%);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px;
+      box-shadow: 0 0 16px var(--accent-glow);
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 2rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-mid);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color var(--transition);
+    }
+
+    .nav-links a:hover { color: var(--text); }
+
+    /* ─── Hero ─────────────────────────────────────────────────────────── */
+    .hero {
+      position: relative;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 6rem clamp(1.5rem, 5vw, 4rem) 4rem;
+      overflow: hidden;
+    }
+
+    /* Radial glow behind hero text */
+    .hero::after {
+      content: "";
+      position: absolute;
+      top: 20%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 700px; height: 500px;
+      background: radial-gradient(ellipse at center, rgba(10,132,255,0.18) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    /* Animated mesh grid */
+    .hero-grid {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(10,132,255,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(10,132,255,0.04) 1px, transparent 1px);
+      background-size: 60px 60px;
+      mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, black 0%, transparent 100%);
+      -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, black 0%, transparent 100%);
+      animation: gridPan 20s linear infinite;
+    }
+
+    @keyframes gridPan {
+      0%   { background-position: 0 0, 0 0; }
+      100% { background-position: 60px 60px, 60px 60px; }
+    }
+
+    .hero-eyebrow {
+      position: relative;
+      z-index: 1;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: var(--accent-dim);
+      border: 1px solid rgba(10,132,255,0.3);
+      padding: 6px 16px;
+      border-radius: 999px;
+      margin-bottom: 2rem;
+      animation: fadeUp 0.8s ease both;
+    }
+
+    .hero-eyebrow::before {
+      content: "";
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pulse 2s ease infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.5; transform: scale(0.8); }
+    }
+
+    h1 {
+      position: relative;
+      z-index: 1;
+      font-size: clamp(4rem, 12vw, 9rem);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      line-height: 0.95;
+      margin-bottom: 1.25rem;
+      animation: fadeUp 0.8s 0.1s ease both;
+      background: linear-gradient(160deg, #ffffff 0%, #b0b8d0 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero-tagline {
+      position: relative;
+      z-index: 1;
+      font-size: clamp(1.4rem, 4vw, 2.2rem);
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: var(--accent);
+      margin-bottom: 1rem;
+      animation: fadeUp 0.8s 0.2s ease both;
+    }
+
+    .hero-sub {
+      position: relative;
+      z-index: 1;
+      font-size: clamp(1rem, 2.5vw, 1.2rem);
+      color: var(--text-mid);
+      max-width: 480px;
+      margin: 0 auto 2.5rem;
+      animation: fadeUp 0.8s 0.3s ease both;
+    }
+
+    .hero-cta-group {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      justify-content: center;
+      animation: fadeUp 0.8s 0.4s ease both;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0.85rem 2rem;
+      border-radius: 14px;
+      font-size: 1rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+      transition: all var(--transition);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 0 32px var(--accent-glow), 0 4px 16px rgba(0,0,0,0.4);
+    }
+
+    .btn-primary:not(:disabled):hover {
+      background: #3aa0ff;
+      transform: translateY(-2px);
+      box-shadow: 0 0 48px rgba(10,132,255,0.5), 0 8px 24px rgba(0,0,0,0.4);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .btn-primary .coming-soon-badge {
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: rgba(255,255,255,0.2);
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+
+    .btn-secondary {
+      background: var(--bg-card);
+      color: var(--text);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(10px);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255,255,255,0.08);
+      border-color: rgba(255,255,255,0.15);
+      transform: translateY(-2px);
+    }
+
+    /* Platform badges */
+    .platform-badges {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+      margin-top: 3rem;
+      color: var(--text-dim);
+      font-size: 0.82rem;
+      font-weight: 500;
+      animation: fadeUp 0.8s 0.5s ease both;
+    }
+
+    .platform-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .platform-badge-dot {
+      width: 4px; height: 4px;
+      background: var(--text-dim);
+      border-radius: 50%;
+    }
+
+    /* ─── Section shared ───────────────────────────────────────────────── */
+    section {
+      position: relative;
+      z-index: 1;
+      padding: clamp(4rem, 8vw, 7rem) clamp(1.5rem, 5vw, 4rem);
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .section-label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .section-label::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(90deg, var(--accent-dim), transparent);
+      max-width: 80px;
+    }
+
+    .section-title {
+      font-size: clamp(2rem, 5vw, 3rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      margin-bottom: 1rem;
+    }
+
+    .section-sub {
+      font-size: 1.05rem;
+      color: var(--text-mid);
+      max-width: 500px;
+      margin-bottom: 3.5rem;
+    }
+
+    /* ─── Divider ──────────────────────────────────────────────────────── */
+    .divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--border), transparent);
+      margin: 0 clamp(1.5rem, 5vw, 4rem);
+    }
+
+    /* ─── Feature Cards ────────────────────────────────────────────────── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 2rem;
+      position: relative;
+      overflow: hidden;
+      transition: all var(--transition);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      animation: fadeUp 0.6s ease both;
+    }
+
+    .feature-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 30% 20%, rgba(10,132,255,0.07) 0%, transparent 60%);
+      opacity: 0;
+      transition: opacity var(--transition);
+    }
+
+    .feature-card:hover {
+      border-color: rgba(10,132,255,0.3);
+      transform: translateY(-4px);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4), 0 0 40px var(--accent-glow);
+    }
+
+    .feature-card:hover::before { opacity: 1; }
+
+    .feature-card:nth-child(1) { animation-delay: 0.1s; }
+    .feature-card:nth-child(2) { animation-delay: 0.2s; }
+    .feature-card:nth-child(3) { animation-delay: 0.3s; }
+
+    .feature-icon {
+      font-size: 2.4rem;
+      margin-bottom: 1.25rem;
+      display: block;
+      line-height: 1;
+      filter: drop-shadow(0 0 12px rgba(10,132,255,0.4));
+    }
+
+    .feature-title {
+      font-size: 1.2rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.6rem;
+    }
+
+    .feature-desc {
+      font-size: 0.95rem;
+      color: var(--text-mid);
+      line-height: 1.65;
+    }
+
+    .feature-tag {
+      display: inline-block;
+      margin-top: 1.25rem;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: var(--accent-dim);
+      padding: 4px 10px;
+      border-radius: 6px;
+    }
+
+    /* ─── How It Works ─────────────────────────────────────────────────── */
+    .how-bg {
+      background: linear-gradient(180deg, transparent, rgba(10,132,255,0.03) 50%, transparent);
+    }
+
+    .steps-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 2rem;
+      position: relative;
+    }
+
+    /* Connecting line between steps */
+    .steps-container::before {
+      content: "";
+      position: absolute;
+      top: 36px;
+      left: 10%;
+      right: 10%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent-dim) 20%, var(--accent-dim) 80%, transparent);
+      display: block;
+    }
+
+    .step {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.75rem;
+      animation: fadeUp 0.6s ease both;
+    }
+
+    .step:nth-child(1) { animation-delay: 0.1s; }
+    .step:nth-child(2) { animation-delay: 0.25s; }
+    .step:nth-child(3) { animation-delay: 0.4s; }
+
+    .step-number {
+      width: 48px; height: 48px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--accent) 0%, #5E5CE6 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      font-weight: 800;
+      color: #fff;
+      box-shadow: 0 0 24px var(--accent-glow);
+      position: relative;
+      z-index: 1;
+    }
+
+    .step-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .step-desc {
+      font-size: 0.92rem;
+      color: var(--text-mid);
+      line-height: 1.6;
+    }
+
+    /* ─── Requirements ─────────────────────────────────────────────────── */
+    .requirements-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .req-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 1.75rem;
+      display: flex;
+      align-items: flex-start;
+      gap: 1.25rem;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      transition: all var(--transition);
+      animation: fadeUp 0.6s ease both;
+    }
+
+    .req-card:nth-child(1) { animation-delay: 0.1s; }
+    .req-card:nth-child(2) { animation-delay: 0.2s; }
+
+    .req-card:hover {
+      border-color: rgba(10,132,255,0.25);
+      transform: translateY(-3px);
+    }
+
+    .req-icon {
+      font-size: 2rem;
+      flex-shrink: 0;
+      filter: drop-shadow(0 0 10px rgba(10,132,255,0.35));
+    }
+
+    .req-title {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 0.35rem;
+    }
+
+    .req-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+
+    .req-list li {
+      font-size: 0.9rem;
+      color: var(--text-mid);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .req-list li::before {
+      content: "";
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ─── Differentiators / Why AirDesk ───────────────────────────────── */
+    .why-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .why-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      padding: 1.5rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      transition: all var(--transition);
+      animation: fadeUp 0.6s ease both;
+    }
+
+    .why-item:hover {
+      border-color: rgba(10,132,255,0.2);
+      background: rgba(255,255,255,0.06);
+    }
+
+    .why-check {
+      width: 24px; height: 24px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent), #5E5CE6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 12px;
+      margin-top: 1px;
+    }
+
+    .why-text strong {
+      display: block;
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 0.2rem;
+    }
+
+    .why-text span {
+      font-size: 0.85rem;
+      color: var(--text-mid);
+    }
+
+    /* ─── Coming Soon Banner ───────────────────────────────────────────── */
+    .coming-soon-banner {
+      margin: 0 clamp(1.5rem, 5vw, 4rem);
+      background: linear-gradient(135deg, rgba(10,132,255,0.12) 0%, rgba(94,92,230,0.12) 100%);
+      border: 1px solid rgba(10,132,255,0.25);
+      border-radius: var(--radius-lg);
+      padding: 2.5rem clamp(1.5rem, 4vw, 3rem);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 2rem;
+      flex-wrap: wrap;
+      animation: fadeUp 0.6s ease both;
+    }
+
+    .coming-soon-text h3 {
+      font-size: 1.3rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.4rem;
+    }
+
+    .coming-soon-text p {
+      font-size: 0.95rem;
+      color: var(--text-mid);
+    }
+
+    .coming-soon-text .highlight { color: var(--accent); font-weight: 600; }
+
+    .tunnel-icon {
+      font-size: 3rem;
+      filter: drop-shadow(0 0 16px var(--accent-glow));
+      animation: float 4s ease-in-out infinite;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50%       { transform: translateY(-8px); }
+    }
+
+    /* ─── Footer ───────────────────────────────────────────────────────── */
+    footer {
+      position: relative;
+      z-index: 1;
+      border-top: 1px solid var(--border);
+      padding: 3rem clamp(1.5rem, 5vw, 4rem);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+    }
+
+    .footer-left {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    .footer-brand {
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .footer-sub {
+      font-size: 0.82rem;
+      color: var(--text-dim);
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 1.5rem;
+      list-style: none;
+    }
+
+    .footer-links a {
+      color: var(--text-mid);
+      text-decoration: none;
+      font-size: 0.88rem;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: color var(--transition);
+    }
+
+    .footer-links a:hover { color: var(--text); }
+
+    .footer-links a svg { opacity: 0.7; }
+
+    /* ─── Animations ───────────────────────────────────────────────────── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Intersection Observer fade-in for below-fold sections */
+    .reveal {
+      opacity: 0;
+      transform: translateY(32px);
+      transition: opacity 0.7s ease, transform 0.7s ease;
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: none;
+    }
+
+    /* ─── Responsive ───────────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+
+      .steps-container::before { display: none; }
+
+      .why-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .coming-soon-banner {
+        flex-direction: column;
+        text-align: center;
+      }
+
+      footer {
+        flex-direction: column;
+        align-items: flex-start;
+        text-align: left;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .hero-cta-group { flex-direction: column; align-items: center; }
+      .btn { width: 100%; max-width: 300px; justify-content: center; }
+    }
+
+    /* ─── Scrollbar ────────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+
+    /* ─── Selection ────────────────────────────────────────────────────── */
+    ::selection { background: var(--accent-dim); color: var(--accent); }
+  </style>
+</head>
+<body>
+
+  <!-- ── Navigation ────────────────────────────────────────────────────── -->
+  <nav>
+    <a class="nav-logo" href="#">
+      <div class="nav-logo-icon">🖥️</div>
+      AirDesk
+    </a>
+    <ul class="nav-links">
+      <li><a href="#features">Features</a></li>
+      <li><a href="#how-it-works">How It Works</a></li>
+      <li><a href="#requirements">Requirements</a></li>
+      <li><a href="https://github.com/helloxtech" target="_blank" rel="noopener">GitHub</a></li>
+    </ul>
+  </nav>
+
+  <!-- ── Hero ──────────────────────────────────────────────────────────── -->
+  <div class="hero">
+    <div class="hero-grid" aria-hidden="true"></div>
+
+    <div class="hero-eyebrow">Now in development</div>
+
+    <h1>AirDesk</h1>
+
+    <p class="hero-tagline">Your Mac. In Your Hands.</p>
+
+    <p class="hero-sub">
+      The remote desktop app that actually feels good to use.
+      Built for iPhone and iPad — the way it should've always been.
+    </p>
+
+    <div class="hero-cta-group">
+      <button class="btn btn-primary" disabled>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+        Download on TestFlight
+        <span class="coming-soon-badge">Soon</span>
+      </button>
+      <a href="https://github.com/helloxtech" class="btn btn-secondary" target="_blank" rel="noopener">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+
+    <div class="platform-badges">
+      <div class="platform-badge">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+        iPhone &amp; iPad
+      </div>
+      <div class="platform-badge-dot"></div>
+      <div class="platform-badge">iOS 16+</div>
+      <div class="platform-badge-dot"></div>
+      <div class="platform-badge">macOS 13+</div>
+      <div class="platform-badge-dot"></div>
+      <div class="platform-badge">Local WiFi</div>
+    </div>
+  </div>
+
+  <!-- ── Features ───────────────────────────────────────────────────────── -->
+  <div class="divider"></div>
+
+  <section id="features">
+    <p class="section-label reveal">Features</p>
+    <h2 class="section-title reveal">Designed for your fingers,<br>not a mouse.</h2>
+    <p class="section-sub reveal">Every interaction is rethought from first principles for a touch-native experience.</p>
+
+    <div class="features-grid">
+      <div class="feature-card reveal">
+        <span class="feature-icon">✋</span>
+        <div class="feature-title">Direct Touch Control</div>
+        <div class="feature-desc">
+          Tap exactly where you want to click. No floating cursor to drag around — just your finger on the screen. It's the interaction model remote desktop has always needed.
+        </div>
+        <span class="feature-tag">Zero Friction</span>
+      </div>
+
+      <div class="feature-card reveal">
+        <span class="feature-icon">🖥️</span>
+        <div class="feature-title">Multi-Monitor Support</div>
+        <div class="feature-desc">
+          Swipe left and right to move between your Mac's displays like flipping through pages. Each monitor gets its own canvas — full resolution, full control.
+        </div>
+        <span class="feature-tag">Multiple Displays</span>
+      </div>
+
+      <div class="feature-card reveal">
+        <span class="feature-icon">📡</span>
+        <div class="feature-title">Auto Discovery</div>
+        <div class="feature-desc">
+          AirDesk finds your Mac automatically over WiFi using Bonjour. No IP addresses to type, no manual setup. Just open the app and tap your Mac to connect.
+        </div>
+        <span class="feature-tag">Bonjour Powered</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── How It Works ───────────────────────────────────────────────────── -->
+  <div class="divider"></div>
+
+  <section id="how-it-works" class="how-bg">
+    <p class="section-label reveal">How It Works</p>
+    <h2 class="section-title reveal">Three steps.<br>Zero hassle.</h2>
+    <p class="section-sub reveal">Get connected in under a minute — seriously.</p>
+
+    <div class="steps-container">
+      <div class="step reveal">
+        <div class="step-number">1</div>
+        <div class="step-title">Install AirDesk on your Mac</div>
+        <div class="step-desc">
+          Download and run the lightweight AirDesk companion app on your Mac. It runs quietly in the menu bar, ready whenever you need it.
+        </div>
+      </div>
+
+      <div class="step reveal">
+        <div class="step-number">2</div>
+        <div class="step-title">Open AirDesk on iPhone</div>
+        <div class="step-desc">
+          Launch AirDesk on your iPhone or iPad while on the same WiFi network. Your Mac appears automatically — no configuration required.
+        </div>
+      </div>
+
+      <div class="step reveal">
+        <div class="step-number">3</div>
+        <div class="step-title">Tap your Mac to connect</div>
+        <div class="step-desc">
+          Tap your Mac in the device list and you're instantly viewing and controlling your desktop. Swipe between monitors, tap to click, pinch to zoom.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Why AirDesk ────────────────────────────────────────────────────── -->
+  <div class="divider"></div>
+
+  <section id="why">
+    <p class="section-label reveal">Why AirDesk</p>
+    <h2 class="section-title reveal">Built different,<br>by design.</h2>
+    <p class="section-sub reveal">Other remote desktop apps were built for mice. AirDesk was built for your thumb.</p>
+
+    <div class="why-grid">
+      <div class="why-item reveal">
+        <div class="why-check">✓</div>
+        <div class="why-text">
+          <strong>Native SwiftUI throughout</strong>
+          <span>Smooth 120Hz animations, proper haptics, and system-consistent UI that feels at home on iOS.</span>
+        </div>
+      </div>
+
+      <div class="why-item reveal">
+        <div class="why-check">✓</div>
+        <div class="why-text">
+          <strong>No account, no cloud</strong>
+          <span>Your connection stays between your iPhone and your Mac. Nothing leaves your local network.</span>
+        </div>
+      </div>
+
+      <div class="why-item reveal">
+        <div class="why-check">✓</div>
+        <div class="why-text">
+          <strong>Direct touch — not cursor mode</strong>
+          <span>Competitors give you a tiny cursor to chase. AirDesk maps your touch directly to screen coordinates.</span>
+        </div>
+      </div>
+
+      <div class="why-item reveal">
+        <div class="why-check">✓</div>
+        <div class="why-text">
+          <strong>Per-monitor display paging</strong>
+          <span>Each Mac display gets its own swipeable page — no zoomed-out overview to squint at.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Requirements ───────────────────────────────────────────────────── -->
+  <div class="divider"></div>
+
+  <section id="requirements">
+    <p class="section-label reveal">Requirements</p>
+    <h2 class="section-title reveal">What you'll need.</h2>
+    <p class="section-sub reveal">AirDesk keeps it simple — any modern Mac and iPhone will do.</p>
+
+    <div class="requirements-grid">
+      <div class="req-card reveal">
+        <div class="req-icon">💻</div>
+        <div>
+          <div class="req-title">Mac (Companion App)</div>
+          <ul class="req-list">
+            <li>macOS Ventura 13.0 or later</li>
+            <li>AirDesk companion installed</li>
+            <li>Same WiFi network as your iPhone</li>
+            <li>Screen Recording permission granted</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="req-card reveal">
+        <div class="req-icon">📱</div>
+        <div>
+          <div class="req-title">iPhone / iPad</div>
+          <ul class="req-list">
+            <li>iOS / iPadOS 16.0 or later</li>
+            <li>AirDesk app from TestFlight</li>
+            <li>Same WiFi network as your Mac</li>
+            <li>Any iPhone or iPad (no special hardware)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Coming Soon Banner ─────────────────────────────────────────────── -->
+  <div class="coming-soon-banner reveal">
+    <div class="coming-soon-text">
+      <h3>Remote access from anywhere — coming soon</h3>
+      <p>
+        AirDesk is adding <span class="highlight">Cloudflare Tunnel</span> support so you can securely reach your Mac from anywhere in the world — not just your home network. No port forwarding, no VPN.
+      </p>
+    </div>
+    <div class="tunnel-icon" aria-hidden="true">🌐</div>
+  </div>
+
+  <!-- ── Footer ─────────────────────────────────────────────────────────── -->
+  <footer>
+    <div class="footer-left">
+      <div class="footer-brand">AirDesk</div>
+      <div class="footer-sub">by helloxtech &nbsp;·&nbsp; Built with SwiftUI &amp; passion</div>
+    </div>
+
+    <ul class="footer-links">
+      <li>
+        <a href="https://github.com/helloxtech" target="_blank" rel="noopener">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+          GitHub
+        </a>
+      </li>
+      <li>
+        <a href="#features">Features</a>
+      </li>
+      <li>
+        <a href="#requirements">Requirements</a>
+      </li>
+    </ul>
+  </footer>
+
+  <!-- ── Scroll Reveal JS ───────────────────────────────────────────────── -->
+  <script>
+    (function () {
+      'use strict';
+
+      // Intersection Observer for scroll animations
+      const revealEls = document.querySelectorAll('.reveal');
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add('visible');
+              observer.unobserve(entry.target);
+            }
+          });
+        },
+        { threshold: 0.12, rootMargin: '0px 0px -40px 0px' }
+      );
+
+      revealEls.forEach((el, i) => {
+        // Stagger siblings
+        el.style.transitionDelay = `${(i % 4) * 0.08}s`;
+        observer.observe(el);
+      });
+
+      // Smooth nav highlight on scroll
+      const sections = document.querySelectorAll('section[id]');
+      const navLinks = document.querySelectorAll('.nav-links a');
+
+      const sectionObserver = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              const id = entry.target.id;
+              navLinks.forEach((link) => {
+                const active = link.getAttribute('href') === `#${id}`;
+                link.style.color = active ? 'var(--text)' : '';
+              });
+            }
+          });
+        },
+        { threshold: 0.4 }
+      );
+
+      sections.forEach((s) => sectionObserver.observe(s));
+
+      // Subtle parallax on hero grid
+      const heroGrid = document.querySelector('.hero-grid');
+      if (heroGrid && window.matchMedia('(prefers-reduced-motion: no-preference)').matches) {
+        window.addEventListener('scroll', () => {
+          const y = window.scrollY;
+          heroGrid.style.transform = `translateY(${y * 0.3}px)`;
+        }, { passive: true });
+      }
+    })();
+  </script>
+</body>
+</html>

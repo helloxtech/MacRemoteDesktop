@@ -35,8 +35,9 @@ struct RemoteDesktopView: View {
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .ignoresSafeArea()
             }
-
-            // Top toolbar overlay
+        }
+        // Toolbar overlay — placed OUTSIDE ZStack so its UIKit views are guaranteed above MonitorView
+        .overlay {
             VStack {
                 HStack {
                     Button(action: { appState.disconnect() }) {
@@ -112,7 +113,6 @@ struct RemoteDesktopView: View {
                 }
             }
             .opacity(toolbarOpacity)
-            .allowsHitTesting(toolbarOpacity > 0.5)
         }
         .overlay(
             KeyboardInputView(isActive: $keyboardVisible, client: appState.webSocketClient)

@@ -79,7 +79,8 @@ class InputInjector: NSObject {
             CGGetActiveDisplayList(0, nil, &count)
             var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
             CGGetActiveDisplayList(count, &displays, &count)
-            cachedDisplays = displays
+            // Sort by ID to match the deterministic order used by ScreenCaptureManager.
+            cachedDisplays = displays.sorted()
             lastDisplayFetch = Date()
         }
         guard index < cachedDisplays.count else { return nil }

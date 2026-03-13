@@ -35,6 +35,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         h264Encoder.delegate = webSocketServer
         screenCaptureManager.delegate = h264Encoder
         webSocketServer.inputDelegate = inputInjector
+        webSocketServer.encoder = h264Encoder
         webSocketServer.clipboardDelegate = clipboardManager
         webSocketServer.monitorInfoProvider = { [weak self] in
             self?.screenCaptureManager.monitorInfos ?? []

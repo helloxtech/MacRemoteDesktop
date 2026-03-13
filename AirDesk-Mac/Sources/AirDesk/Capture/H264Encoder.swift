@@ -13,6 +13,15 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
     private var sessions: [Int: VTCompressionSession] = [:]
     private let encoderQueue = DispatchQueue(label: "airdesk.encoder")
     private var frameCounters: [Int: Int] = [:]
+    private var pendingKeyframe: Set<Int> = []
+
+    /// Force a keyframe on all active display streams on the next encoded frame.
+    func forceKeyframeOnNextFrame() {
+        encoderQueue.async { [weak self] in
+            guard let self else { return }
+            for key in self.sessions.keys { self.pendingKeyframe.insert(key) }
+        }
+    }
 
     func didCaptureFrame(_ frame: CVPixelBuffer, displayIndex: Int) {
         encoderQueue.async { [weak self] in
@@ -28,7 +37,8 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
 
         let presentationTime = CMTime(value: CMTimeValue(CACurrentMediaTime() * 1000), timescale: 1000)
         frameCounters[displayIndex, default: 0] += 1
-        let forceKeyframe = (frameCounters[displayIndex]! % 60) == 1
+        let forced = pendingKeyframe.remove(displayIndex) != nil
+        let forceKeyframe = forced || (frameCounters[displayIndex]! % 60) == 1
 
         var frameProperties: CFDictionary? = nil
         if forceKeyframe {

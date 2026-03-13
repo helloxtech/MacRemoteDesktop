@@ -10,6 +10,7 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
     let serverQueue = DispatchQueue(label: "airdesk.server")
 
     weak var inputDelegate: InputInjector?
+    weak var encoder: H264Encoder?
     var clientChangeHandler: ((Int) -> Void)?
     var monitorInfoProvider: (() -> [MonitorInfo])?
     var clipboardDelegate: ClipboardManager?
@@ -78,6 +79,7 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
 
         connection.start(queue: serverQueue)
         receive(from: connection)
+        encoder?.forceKeyframeOnNextFrame()
     }
 
     private func receive(from connection: NWConnection) {
@@ -112,6 +114,7 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
             clipboardDelegate?.writeToClipboard(msg.content)
         case .requestStream(let msg):
             print("Client requested stream for display \(msg.displayIndex) at \(msg.fps)fps quality=\(msg.quality)")
+            encoder?.forceKeyframeOnNextFrame()
         case .unknown:
             break
         }

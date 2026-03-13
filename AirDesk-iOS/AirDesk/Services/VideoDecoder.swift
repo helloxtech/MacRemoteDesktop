@@ -1,5 +1,6 @@
 import VideoToolbox
 import CoreMedia
+import QuartzCore
 import Foundation
 
 class VideoDecoder {
@@ -71,18 +72,25 @@ class VideoDecoder {
     private func createFormatDescription() -> Bool {
         guard let sps = spsData, let pps = ppsData else { return false }
 
-        let paramSets: [Data] = [sps, pps]
-        let status = paramSets.withUnsafeBufferPointers { ptrs -> OSStatus in
-            var rawPtrs = ptrs.map { $0.baseAddress! }
-            var sizes = ptrs.map { $0.count }
-            return CMVideoFormatDescriptionCreateFromH264ParameterSets(
-                allocator: nil,
-                parameterSetCount: 2,
-                parameterSetPointers: &rawPtrs,
-                parameterSetSizes: &sizes,
-                nalUnitHeaderLength: 4,
-                formatDescriptionOut: &formatDescription
-            )
+        var status: OSStatus = noErr
+        sps.withUnsafeBytes { spsPtr in
+            pps.withUnsafeBytes { ppsPtr in
+                guard let spsBase = spsPtr.baseAddress,
+                      let ppsBase = ppsPtr.baseAddress else { return }
+                var paramPtrs: [UnsafePointer<UInt8>] = [
+                    spsBase.assumingMemoryBound(to: UInt8.self),
+                    ppsBase.assumingMemoryBound(to: UInt8.self)
+                ]
+                var paramSizes: [Int] = [sps.count, pps.count]
+                status = CMVideoFormatDescriptionCreateFromH264ParameterSets(
+                    allocator: nil,
+                    parameterSetCount: 2,
+                    parameterSetPointers: &paramPtrs,
+                    parameterSetSizes: &paramSizes,
+                    nalUnitHeaderLength: 4,
+                    formatDescriptionOut: &formatDescription
+                )
+            }
         }
         return status == noErr
     }
@@ -160,14 +168,3 @@ class VideoDecoder {
     }
 }
 
-private extension Array {
-    func withUnsafeBufferPointers<T, R>(_ body: ([UnsafeBufferPointer<T>]) throws -> R) rethrows -> R where Element == Data {
-        var ptrs: [UnsafeBufferPointer<T>] = []
-        return try self.reduce(into: ptrs) { acc, data in
-            data.withUnsafeBytes { acc.append($0.bindMemory(to: T.self)) }
-        } |> { try body($0) }
-    }
-}
-
-infix operator |>: AdditionPrecedence
-func |> <T, R>(lhs: T, rhs: (T) throws -> R) rethrows -> R { try rhs(lhs) }

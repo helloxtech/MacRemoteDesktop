@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 struct DiscoveredHost: Identifiable, Hashable {
     let id: UUID
@@ -88,5 +89,3 @@ struct KeyboardMessage: Codable {
         self.action = action
     }
 }
-
-import UIKit

@@ -1,5 +1,6 @@
 import VideoToolbox
 import CoreMedia
+import QuartzCore
 import Foundation
 
 protocol H264EncoderDelegate: AnyObject {
@@ -91,11 +92,10 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
         }
 
         // Convert AVCC to Annex B
-        var totalLength = 0
-        CMBlockBufferGetDataLength(dataBuffer, lengthAtOffsetOut: nil, totalLengthOut: &totalLength)
+        let totalLength = CMBlockBufferGetDataLength(dataBuffer)
         var rawData = Data(count: totalLength)
         rawData.withUnsafeMutableBytes { ptr in
-            CMBlockBufferCopyDataBytes(dataBuffer, atOffset: 0, dataLength: totalLength, destination: ptr.baseAddress!)
+            _ = CMBlockBufferCopyDataBytes(dataBuffer, atOffset: 0, dataLength: totalLength, destination: ptr.baseAddress!)
         }
 
         var offset = 0

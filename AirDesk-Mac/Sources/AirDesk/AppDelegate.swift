@@ -20,6 +20,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         screenCaptureManager = ScreenCaptureManager()
         bonjourAdvertiser = BonjourAdvertiser(port: 7890)
         cloudflareTunnelManager = CloudflareTunnelManager()
+        bonjourAdvertiser.start()
         statusBarController = StatusBarController(
             server: webSocketServer,
             tunnel: cloudflareTunnelManager,
@@ -29,6 +30,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         h264Encoder.delegate = webSocketServer
         screenCaptureManager.delegate = h264Encoder
         webSocketServer.inputDelegate = inputInjector
+        webSocketServer.monitorInfoProvider = { [weak self] in
+            self?.screenCaptureManager.monitorInfos ?? []
+        }
         webSocketServer.clientChangeHandler = { [weak self] count in
             DispatchQueue.main.async {
                 self?.statusBarController.updateClientCount(count)

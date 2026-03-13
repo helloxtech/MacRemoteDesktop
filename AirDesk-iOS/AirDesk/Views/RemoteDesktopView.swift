@@ -27,7 +27,7 @@ struct RemoteDesktopView: View {
             if !appState.monitors.isEmpty {
                 TabView(selection: $appState.activeMonitorIndex) {
                     ForEach(appState.monitors) { monitor in
-                        MonitorView(monitor: monitor, displayIndex: monitor.id)
+                        MonitorView(monitor: monitor, displayIndex: monitor.id, onInteraction: resetFadeTimer)
                             .tag(monitor.id)
                             .ignoresSafeArea()
                     }
@@ -35,12 +35,6 @@ struct RemoteDesktopView: View {
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .ignoresSafeArea()
             }
-
-            // Tap-anywhere to restore toolbar opacity
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { resetFadeTimer() }
-                .ignoresSafeArea()
 
             // Top toolbar overlay
             VStack {

@@ -1,14 +1,17 @@
 import SwiftUI
 import UIKit
+import MetalKit
 
 struct MonitorView: UIViewControllerRepresentable {
 
     let monitor: MonitorInfo
     let displayIndex: Int
+    var onInteraction: (() -> Void)?
     @EnvironmentObject var appState: AppState
 
     func makeUIViewController(context: Context) -> MonitorViewController {
         let vc = MonitorViewController(monitor: monitor, displayIndex: displayIndex)
+        vc.onInteraction = onInteraction
         if let client = appState.webSocketClient {
             vc.configure(client: client)
         }
@@ -20,6 +23,7 @@ struct MonitorView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ vc: MonitorViewController, context: Context) {
+        vc.onInteraction = onInteraction
         appState.registerFrameHandler(displayIndex: displayIndex) { pixelBuffer in
             vc.updateFrame(pixelBuffer)
         }
@@ -36,6 +40,7 @@ class MonitorViewController: UIViewController {
     private var cursorView: UIView!
     private var scale: CGFloat = 1.0
     private var lastScale: CGFloat = 1.0
+    var onInteraction: (() -> Void)?
 
     init(monitor: MonitorInfo, displayIndex: Int) {
         self.monitor = monitor
@@ -119,6 +124,7 @@ class MonitorViewController: UIViewController {
     }
 
     @objc private func handleTap(_ gr: UITapGestureRecognizer) {
+        onInteraction?()
         let point = gr.location(in: view)
         inputMapper?.handleTap(at: point, in: view.bounds.size)
         flashCursor(at: point)
@@ -126,6 +132,7 @@ class MonitorViewController: UIViewController {
 
     @objc private func handleLongPress(_ gr: UILongPressGestureRecognizer) {
         guard gr.state == .began else { return }
+        onInteraction?()
         let point = gr.location(in: view)
         inputMapper?.handleLongPress(at: point, in: view.bounds.size)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -135,6 +142,7 @@ class MonitorViewController: UIViewController {
         let point = gr.location(in: view)
         switch gr.state {
         case .began:
+            onInteraction?()
             inputMapper?.handleDragBegan(at: point, in: view.bounds.size)
             cursorView.isHidden = false
         case .changed:
@@ -149,6 +157,7 @@ class MonitorViewController: UIViewController {
 
     @objc private func handleScroll(_ gr: UIPanGestureRecognizer) {
         guard gr.state == .changed else { return }
+        onInteraction?()
         // Use translation delta (not velocity) for smooth, proportional scrolling
         let delta = gr.translation(in: view)
         gr.setTranslation(.zero, in: view)

@@ -25,7 +25,5 @@ targets:
         CODE_SIGN_ENTITLEMENTS: AirDesk.entitlements
         DEVELOPMENT_TEAM: ""
     dependencies:
-      - framework: ScreenCaptureKit.framework
-        weak: false
-      - framework: VideoToolbox.framework
-        weak: false
+      - sdk: ScreenCaptureKit.framework
+      - sdk: VideoToolbox.framework

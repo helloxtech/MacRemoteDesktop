@@ -171,7 +171,7 @@ struct HostRow: View {
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.caption)
-                    .foregroundColor(.tertiaryLabel)
+                    .foregroundColor(Color(UIColor.tertiaryLabel))
             }
             .padding()
         }

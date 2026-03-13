@@ -4,6 +4,20 @@ struct RemoteDesktopView: View {
     @EnvironmentObject var appState: AppState
     @State private var showMonitorPicker = false
     @State private var keyboardVisible = false
+    @State private var toolbarOpacity: Double = 1.0
+    @State private var toolbarFadeTask: Task<Void, Never>?
+
+    private func resetFadeTimer() {
+        withAnimation(.easeInOut(duration: 0.2)) { toolbarOpacity = 1.0 }
+        toolbarFadeTask?.cancel()
+        toolbarFadeTask = Task {
+            try? await Task.sleep(nanoseconds: 3_500_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.6)) { toolbarOpacity = 0.12 }
+            }
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -21,6 +35,12 @@ struct RemoteDesktopView: View {
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .ignoresSafeArea()
             }
+
+            // Tap-anywhere to restore toolbar opacity
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { resetFadeTimer() }
+                .ignoresSafeArea()
 
             // Top toolbar overlay
             VStack {
@@ -74,8 +94,8 @@ struct RemoteDesktopView: View {
                             .cornerRadius(20)
                     }
 
-                    // Latency badge
-                    LatencyBadge(ms: appState.latencyMs)
+                    // Latency + FPS badges
+                    LatencyBadge(ms: appState.latencyMs, fps: appState.decodedFPS)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
@@ -97,11 +117,14 @@ struct RemoteDesktopView: View {
                     .padding(.bottom, 20)
                 }
             }
+            .opacity(toolbarOpacity)
+            .allowsHitTesting(toolbarOpacity > 0.5)
         }
         .overlay(
             KeyboardInputView(isActive: $keyboardVisible, client: appState.webSocketClient)
                 .frame(width: 0, height: 0)
         )
+        .onAppear { resetFadeTimer() }
         .statusBar(hidden: true)
         .persistentSystemOverlays(.hidden)
     }
@@ -115,6 +138,7 @@ extension Array {
 
 private struct LatencyBadge: View {
     let ms: Int
+    let fps: Double
 
     private var color: Color {
         if ms == 0 { return .green }
@@ -123,18 +147,29 @@ private struct LatencyBadge: View {
         return .red
     }
 
-    private var label: String {
-        ms == 0 ? "—" : "\(ms)ms"
-    }
-
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             Circle()
                 .fill(color)
                 .frame(width: 7, height: 7)
-            Text(label)
-                .font(.caption.weight(.medium))
-                .foregroundColor(.white)
+            if ms > 0 {
+                Text("\(ms)ms")
+                    .font(.caption.weight(.medium))
+                    .foregroundColor(.white)
+            }
+            if fps > 0 {
+                Text("·")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.5))
+                Text("\(Int(fps.rounded()))fps")
+                    .font(.caption.weight(.medium))
+                    .foregroundColor(.white.opacity(0.8))
+            }
+            if ms == 0 && fps == 0 {
+                Text("—")
+                    .font(.caption.weight(.medium))
+                    .foregroundColor(.white)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)

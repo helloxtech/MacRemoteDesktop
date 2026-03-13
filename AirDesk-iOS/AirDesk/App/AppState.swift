@@ -18,6 +18,7 @@ class AppState: ObservableObject {
     @Published var activeMonitorIndex: Int = 0
     @Published var errorMessage: String?
     @Published var latencyMs: Int = 0
+    @Published var decodedFPS: Double = 0
 
     private(set) var webSocketClient: WebSocketClient?
     private var discovery: BonjourDiscovery?
@@ -26,6 +27,10 @@ class AppState: ObservableObject {
 
     // Keyed by displayIndex — fixes the single-handler overwrite bug for multi-monitor
     private var frameUpdateHandlers: [Int: (CVPixelBuffer) -> Void] = [:]
+
+    // FPS tracking
+    private var fpsFrameCount = 0
+    private var fpsWindowStart = Date()
 
     func startDiscovery() {
         let d = BonjourDiscovery()
@@ -86,6 +91,8 @@ class AppState: ObservableObject {
         connectionState = .disconnected
         monitors = []
         selectedHost = nil
+        latencyMs = 0
+        decodedFPS = 0
         frameUpdateHandlers.removeAll()
         videoDecoders.removeAll()
     }
@@ -111,10 +118,23 @@ class AppState: ObservableObject {
             let decoder = VideoDecoder(displayIndex: displayIndex)
             decoder.frameHandler = { [weak self] pixelBuffer, idx in
                 guard let self else { return }
+                self.tickFPS()
                 Task { @MainActor in self.frameUpdateHandlers[idx]?(pixelBuffer) }
             }
             videoDecoders[displayIndex] = decoder
         }
         videoDecoders[displayIndex]?.decode(data, isKeyframe: isKeyframe)
+    }
+
+    // Called on decoderQueue from frameHandler
+    private func tickFPS() {
+        fpsFrameCount += 1
+        let elapsed = Date().timeIntervalSince(fpsWindowStart)
+        if elapsed >= 1.0 {
+            let fps = Double(fpsFrameCount) / elapsed
+            fpsFrameCount = 0
+            fpsWindowStart = Date()
+            Task { @MainActor in self.decodedFPS = fps }
+        }
     }
 }

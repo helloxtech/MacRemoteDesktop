@@ -69,12 +69,20 @@ class InputInjector: NSObject {
         event.post(tap: .cghidEventTap)
     }
 
+    // Cache avoids calling CGGetActiveDisplayList on every mouse event
+    private var cachedDisplays: [CGDirectDisplayID] = []
+    private var lastDisplayFetch: Date = .distantPast
+
     private func displayForIndex(_ index: Int) -> CGDirectDisplayID? {
-        var displayCount: UInt32 = 0
-        CGGetActiveDisplayList(0, nil, &displayCount)
-        var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
-        CGGetActiveDisplayList(displayCount, &displays, &displayCount)
-        guard index < displays.count else { return nil }
-        return displays[index]
+        if Date().timeIntervalSince(lastDisplayFetch) > 2.0 {
+            var count: UInt32 = 0
+            CGGetActiveDisplayList(0, nil, &count)
+            var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+            CGGetActiveDisplayList(count, &displays, &count)
+            cachedDisplays = displays
+            lastDisplayFetch = Date()
+        }
+        guard index < cachedDisplays.count else { return nil }
+        return cachedDisplays[index]
     }
 }

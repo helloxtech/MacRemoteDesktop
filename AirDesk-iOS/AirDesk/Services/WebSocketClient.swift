@@ -10,6 +10,7 @@ class WebSocketClient: NSObject {
     private var reconnectAttempts = 0
     private let maxReconnectAttempts = 5
     private var isReconnecting = false
+    private var connectTimeoutWork: DispatchWorkItem?
 
     var onMonitorsReceived: (([MonitorInfo]) -> Void)?
     // timestampMs added so AppState can compute latency
@@ -25,7 +26,10 @@ class WebSocketClient: NSObject {
     }
 
     func connect() {
+        // Reset reconnect counter so future failures can retry
+        reconnectAttempts = 0
         // Cancel and invalidate previous session to prevent URLSession leak on reconnect
+        connectTimeoutWork?.cancel()
         task?.cancel(with: .normalClosure, reason: nil)
         session?.invalidateAndCancel()
 
@@ -36,9 +40,19 @@ class WebSocketClient: NSObject {
         task?.resume()
         startReceiving()
         sendConnectMessage()
+
+        // 10-second connection timeout — cancelled when screen_info arrives
+        let timeout = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.handleDisconnect(URLError(.timedOut))
+        }
+        connectTimeoutWork = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: timeout)
     }
 
     func disconnect() {
+        connectTimeoutWork?.cancel()
+        connectTimeoutWork = nil
         isReconnecting = false
         reconnectAttempts = maxReconnectAttempts   // prevent any pending reconnect
         task?.cancel(with: .normalClosure, reason: nil)
@@ -90,6 +104,8 @@ class WebSocketClient: NSObject {
 
         switch type {
         case "screen_info":
+            connectTimeoutWork?.cancel()
+            connectTimeoutWork = nil
             if let msg = try? JSONDecoder().decode(ScreenInfoMessage.self, from: data) {
                 onMonitorsReceived?(msg.monitors)
                 if !msg.monitors.isEmpty { requestStream(displayIndex: 0) }

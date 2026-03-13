@@ -149,17 +149,25 @@ class MonitorViewController: UIViewController {
 
     @objc private func handleScroll(_ gr: UIPanGestureRecognizer) {
         guard gr.state == .changed else { return }
-        let velocity = gr.velocity(in: view)
+        // Use translation delta (not velocity) for smooth, proportional scrolling
+        let delta = gr.translation(in: view)
+        gr.setTranslation(.zero, in: view)
         let point = gr.location(in: view)
-        inputMapper?.handleScroll(deltaX: velocity.x / 100, deltaY: velocity.y / 100, at: point, in: view.bounds.size)
+        inputMapper?.handleScroll(deltaX: delta.x, deltaY: delta.y, at: point, in: view.bounds.size)
     }
 
     @objc private func handlePinch(_ gr: UIPinchGestureRecognizer) {
         switch gr.state {
         case .began: lastScale = scale
         case .changed:
-            scale = max(1.0, min(3.0, lastScale * gr.scale))
+            scale = max(1.0, min(4.0, lastScale * gr.scale))
+            // Scale around the pinch center, not the view center
+            let pinch = gr.location(in: view)
+            let cx = view.bounds.midX, cy = view.bounds.midY
+            let tx = (pinch.x - cx) * (1.0 - scale)
+            let ty = (pinch.y - cy) * (1.0 - scale)
             mtkView.transform = CGAffineTransform(scaleX: scale, y: scale)
+                .concatenating(CGAffineTransform(translationX: tx, y: ty))
         case .ended:
             if scale < 1.05 {
                 UIView.animate(withDuration: 0.2) { self.mtkView.transform = .identity }

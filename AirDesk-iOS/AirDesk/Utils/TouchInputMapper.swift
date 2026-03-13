@@ -54,8 +54,8 @@ class TouchInputMapper {
             x: Float(n.x), y: Float(n.y),
             action: "scroll",
             displayIndex: activeDisplayIndex,
-            scrollDeltaX: Float(deltaX * 0.03),
-            scrollDeltaY: Float(-deltaY * 0.03)   // negated
+            scrollDeltaX: Float(deltaX * 0.4),
+            scrollDeltaY: Float(-deltaY * 0.4)   // negated: iOS Y↓ vs Mac scroll +up
         ))
     }
 

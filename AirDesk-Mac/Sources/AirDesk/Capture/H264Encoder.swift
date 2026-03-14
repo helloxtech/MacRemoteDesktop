@@ -1,5 +1,6 @@
 import VideoToolbox
 import CoreMedia
+import CoreGraphics
 import QuartzCore
 import Foundation
 
@@ -29,6 +30,42 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
         }
     }
 
+    /// Capture the screen directly via Core Graphics and encode as a keyframe.
+    /// Bypasses ScreenCaptureKit, so it works even when the screen is static.
+    func captureAndEncodeImmediate(displayIndex: Int) {
+        encoderQueue.async { [weak self] in
+            guard let self else { return }
+            var count: UInt32 = 0
+            CGGetActiveDisplayList(0, nil, &count)
+            var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+            CGGetActiveDisplayList(count, &displays, &count)
+            let sorted = displays.sorted()
+            guard displayIndex < sorted.count else { return }
+            guard let cgImage = CGDisplayCreateImage(sorted[displayIndex]) else { return }
+            guard let pixelBuffer = self.pixelBuffer(from: cgImage) else { return }
+            self.pendingKeyframe.insert(displayIndex)
+            self.encodeFrame(pixelBuffer, displayIndex: displayIndex)
+        }
+    }
+
+    private func pixelBuffer(from image: CGImage) -> CVPixelBuffer? {
+        let w = image.width, h = image.height
+        var pb: CVPixelBuffer?
+        CVPixelBufferCreate(nil, w, h, kCVPixelFormatType_32BGRA,
+                            [kCVPixelBufferCGImageCompatibilityKey: true,
+                             kCVPixelBufferCGBitmapContextCompatibilityKey: true] as CFDictionary, &pb)
+        guard let buf = pb else { return nil }
+        CVPixelBufferLockBaseAddress(buf, [])
+        if let ctx = CGContext(data: CVPixelBufferGetBaseAddress(buf), width: w, height: h,
+                               bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buf),
+                               space: CGColorSpaceCreateDeviceRGB(),
+                               bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) {
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        }
+        CVPixelBufferUnlockBaseAddress(buf, [])
+        return buf
+    }
+
     private func encodeFrame(_ pixelBuffer: CVPixelBuffer, displayIndex: Int) {
         if sessions[displayIndex] == nil {
             createSession(for: pixelBuffer, displayIndex: displayIndex)
@@ -47,10 +84,12 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
 
         VTCompressionSessionEncodeFrame(session, imageBuffer: pixelBuffer, presentationTimeStamp: presentationTime, duration: .invalid, frameProperties: frameProperties, infoFlagsOut: nil) { [weak self] status, flags, sampleBuffer in
             guard status == noErr, let sampleBuffer else { return }
-            // Read actual keyframe status from the sample buffer attachment instead of relying
-            // on forceKeyframe — VT may produce a keyframe on its own (first frame, resolution change)
-            let notSync = CMGetAttachment(sampleBuffer, key: kCMSampleAttachmentKey_NotSync, attachmentModeOut: nil) as? Bool
-            let isActualKeyframe = !(notSync ?? false)
+            // Read keyframe status from the per-sample attachment array.
+            // CMGetAttachment reads buffer-level and returns nil for this key,
+            // so we must use the per-sample array instead.
+            let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[CFString: Any]]
+            let dependsOnOthers = attachments?.first?[kCMSampleAttachmentKey_DependsOnOthers] as? Bool ?? false
+            let isActualKeyframe = !dependsOnOthers
             self?.handleEncodedFrame(sampleBuffer, displayIndex: displayIndex, isKeyframe: isActualKeyframe)
         }
     }

@@ -19,6 +19,12 @@ class InputInjector: NSObject {
             postMouseEvent(type: .leftMouseDown, point: point, button: .left)
             postMouseEvent(type: .leftMouseUp, point: point, button: .left)
 
+        case "doubleClick":
+            postMouseEvent(type: .leftMouseDown, point: point, button: .left, clickCount: 1)
+            postMouseEvent(type: .leftMouseUp, point: point, button: .left, clickCount: 1)
+            postMouseEvent(type: .leftMouseDown, point: point, button: .left, clickCount: 2)
+            postMouseEvent(type: .leftMouseUp, point: point, button: .left, clickCount: 2)
+
         case "rightClick":
             postMouseEvent(type: .rightMouseDown, point: point, button: .right)
             postMouseEvent(type: .rightMouseUp, point: point, button: .right)
@@ -64,8 +70,9 @@ class InputInjector: NSObject {
         event.post(tap: .cghidEventTap)
     }
 
-    private func postMouseEvent(type: CGEventType, point: CGPoint, button: CGMouseButton) {
+    private func postMouseEvent(type: CGEventType, point: CGPoint, button: CGMouseButton, clickCount: Int64 = 1) {
         guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: button) else { return }
+        event.setIntegerValueField(.mouseEventClickState, value: clickCount)
         event.post(tap: .cghidEventTap)
     }
 

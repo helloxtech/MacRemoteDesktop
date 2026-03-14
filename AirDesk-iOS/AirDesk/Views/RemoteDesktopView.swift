@@ -2,20 +2,30 @@ import SwiftUI
 
 struct RemoteDesktopView: View {
     @EnvironmentObject var appState: AppState
-    @State private var showMonitorPicker = false
     @State private var keyboardVisible = false
-    @State private var toolbarOpacity: Double = 1.0
-    @State private var toolbarFadeTask: Task<Void, Never>?
+    @State private var toolbarVisible = false
+    @State private var activeModifiers: Set<String> = []
 
-    private func resetFadeTimer() {
-        withAnimation(.easeInOut(duration: 0.2)) { toolbarOpacity = 1.0 }
-        toolbarFadeTask?.cancel()
-        toolbarFadeTask = Task {
-            try? await Task.sleep(nanoseconds: 3_500_000_000)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                withAnimation(.easeInOut(duration: 0.6)) { toolbarOpacity = 0.12 }
-            }
+    private func toggleToolbar() {
+        withAnimation(.easeInOut(duration: 0.25)) { toolbarVisible.toggle() }
+    }
+
+    private func sendKey(_ keyCode: Int) {
+        let mods = Array(activeModifiers)
+        appState.webSocketClient?.sendKeyboardMessage(
+            KeyboardMessage(keyCode: keyCode, modifiers: mods, action: "down"))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            appState.webSocketClient?.sendKeyboardMessage(
+                KeyboardMessage(keyCode: keyCode, modifiers: mods, action: "up"))
+        }
+        activeModifiers.removeAll()
+    }
+
+    private func toggleModifier(_ mod: String) {
+        if activeModifiers.contains(mod) {
+            activeModifiers.remove(mod)
+        } else {
+            activeModifiers.insert(mod)
         }
     }
 
@@ -27,7 +37,7 @@ struct RemoteDesktopView: View {
             if !appState.monitors.isEmpty {
                 TabView(selection: $appState.activeMonitorIndex) {
                     ForEach(appState.monitors) { monitor in
-                        MonitorView(monitor: monitor, displayIndex: monitor.id, onInteraction: resetFadeTimer)
+                        MonitorView(monitor: monitor, displayIndex: monitor.id)
                             .tag(monitor.id)
                             .ignoresSafeArea()
                     }
@@ -36,91 +46,159 @@ struct RemoteDesktopView: View {
                 .ignoresSafeArea()
             }
         }
-        // Toolbar overlay — placed OUTSIDE ZStack so its UIKit views are guaranteed above MonitorView
-        .overlay {
-            VStack {
-                HStack {
-                    Button(action: { appState.disconnect() }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chevron.left")
-                            Text("Disconnect")
-                        }
-                        .font(.subheadline.weight(.medium))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(20)
-                    }
-
-                    Spacer()
+        // Toggle pill — always visible, top-right
+        .overlay(alignment: .topTrailing) {
+            Button(action: toggleToolbar) {
+                Image(systemName: toolbarVisible ? "chevron.down" : "ellipsis")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 36, height: 28)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(14)
+            }
+            .padding(.trailing, 8)
+            .padding(.top, 6)
+        }
+        // Top bar — toggled
+        .overlay(alignment: .top) {
+            if toolbarVisible {
+                HStack(spacing: 6) {
+                    topButton("xmark") { appState.disconnect() }
 
                     if appState.monitors.count > 1 {
-                        Text(appState.monitors[safe: appState.activeMonitorIndex]?.name ?? "Display")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(20)
-                    }
-
-                    Spacer()
-
-                    // Keyboard toggle
-                    Button(action: { keyboardVisible.toggle() }) {
-                        Image(systemName: "keyboard")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundColor(keyboardVisible ? .yellow : .white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(20)
-                    }
-
-                    // Paste to Mac
-                    Button(action: { appState.pushClipboardToMac() }) {
-                        Image(systemName: "doc.on.clipboard")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(20)
-                    }
-
-                    // Latency + FPS badges
-                    LatencyBadge(ms: appState.latencyMs, fps: appState.decodedFPS)
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
-
-                Spacer()
-
-                // Page dots for multi-monitor
-                if appState.monitors.count > 1 {
-                    HStack(spacing: 8) {
                         ForEach(appState.monitors) { monitor in
-                            Circle()
-                                .fill(appState.activeMonitorIndex == monitor.id ? Color.white : Color.white.opacity(0.4))
-                                .frame(width: appState.activeMonitorIndex == monitor.id ? 8 : 6,
-                                       height: appState.activeMonitorIndex == monitor.id ? 8 : 6)
-                                .onTapGesture { appState.selectMonitor(monitor.id) }
-                                .animation(.spring(response: 0.3), value: appState.activeMonitorIndex)
+                            topMonitorButton(monitor)
                         }
                     }
-                    .padding(.bottom, 20)
+
+                    topButton("keyboard", highlight: keyboardVisible) { keyboardVisible.toggle() }
+
+                    Spacer()
                 }
+                .padding(.horizontal, 8)
+                .padding(.top, 6)
+                .transition(.opacity)
             }
-            .opacity(toolbarOpacity)
+        }
+        // Bottom control panel — toggled
+        .overlay(alignment: .bottom) {
+            if toolbarVisible {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        iconButton("arrow.left") { sendKey(123) }
+                        iconButton("arrow.down") { sendKey(125) }
+                        iconButton("arrow.up") { sendKey(126) }
+                        iconButton("arrow.right") { sendKey(124) }
+
+                        separator
+
+                        labelButton("↵") { sendKey(36) }
+                        labelButton("Esc") { sendKey(53) }
+                        labelButton("Tab") { sendKey(48) }
+
+                        separator
+
+                        modifierKey("⌘", mod: "cmd")
+                        modifierKey("⌃", mod: "ctrl")
+                        modifierKey("⌥", mod: "opt")
+                        modifierKey("⇧", mod: "shift")
+
+                        separator
+
+                        iconButton("doc.on.clipboard") { appState.pushClipboardToMac() }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                }
+                .background(.ultraThinMaterial)
+                .cornerRadius(14)
+                .padding(.horizontal, 6)
+                .padding(.bottom, 6)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
         .overlay(
-            KeyboardInputView(isActive: $keyboardVisible, client: appState.webSocketClient)
+            KeyboardInputView(isActive: $keyboardVisible, activeModifiers: $activeModifiers, client: appState.webSocketClient)
                 .frame(width: 0, height: 0)
         )
-        .onAppear { resetFadeTimer() }
         .statusBar(hidden: true)
         .persistentSystemOverlays(.hidden)
+    }
+
+    // MARK: - Top Bar Buttons
+
+    private func topButton(_ icon: String, highlight: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(highlight ? .yellow : .white)
+                .frame(width: 32, height: 28)
+                .background(.ultraThinMaterial)
+                .cornerRadius(14)
+        }
+    }
+
+    private func topMonitorButton(_ monitor: MonitorInfo) -> some View {
+        let selected = appState.activeMonitorIndex == monitor.id
+        return Button { appState.selectMonitor(monitor.id) } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "display")
+                    .font(.system(size: 9))
+                Text("\(monitor.id + 1)")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundColor(selected ? .black : .white)
+            .padding(.horizontal, 7)
+            .frame(height: 28)
+            .background(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.ultraThinMaterial))
+            .cornerRadius(14)
+            .animation(.spring(response: 0.3), value: selected)
+        }
+    }
+
+    // MARK: - Bottom Toolbar Buttons
+
+    private func iconButton(_ icon: String, highlight: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(highlight ? .yellow : .white)
+                .frame(width: 36, height: 36)
+                .background(Color.white.opacity(highlight ? 0.18 : 0.06))
+                .cornerRadius(8)
+        }
+    }
+
+    private func labelButton(_ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(minWidth: 36, minHeight: 36)
+                .padding(.horizontal, 2)
+                .background(Color.white.opacity(0.06))
+                .cornerRadius(8)
+        }
+    }
+
+    private func modifierKey(_ symbol: String, mod: String) -> some View {
+        let active = activeModifiers.contains(mod)
+        return Button { toggleModifier(mod) } label: {
+            Text(symbol)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(active ? .black : .white)
+                .frame(width: 38, height: 36)
+                .background(active ? Color.white : Color.white.opacity(0.06))
+                .cornerRadius(8)
+                .animation(.easeInOut(duration: 0.15), value: active)
+        }
+    }
+
+    private var separator: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.15))
+            .frame(width: 1, height: 24)
+            .padding(.horizontal, 2)
     }
 }
 

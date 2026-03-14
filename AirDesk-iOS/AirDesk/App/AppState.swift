@@ -27,6 +27,8 @@ class AppState: ObservableObject {
 
     // Keyed by displayIndex — fixes the single-handler overwrite bug for multi-monitor
     private var frameUpdateHandlers: [Int: (CVPixelBuffer) -> Void] = [:]
+    // Frames decoded before the MonitorView handler is registered
+    private var pendingFrames: [Int: CVPixelBuffer] = [:]
 
     // FPS tracking
     private var fpsFrameCount = 0
@@ -71,6 +73,7 @@ class AppState: ObservableObject {
                 self?.monitors = []
                 self?.errorMessage = error?.localizedDescription
                 self?.frameUpdateHandlers.removeAll()
+                self?.pendingFrames.removeAll()
                 self?.videoDecoders.removeAll()
             }
         }
@@ -96,6 +99,7 @@ class AppState: ObservableObject {
         latencyMs = 0
         decodedFPS = 0
         frameUpdateHandlers.removeAll()
+        pendingFrames.removeAll()
         videoDecoders.removeAll()
         startDiscovery()  // restart scan so the list is fresh when returning to ConnectionView
     }
@@ -110,9 +114,17 @@ class AppState: ObservableObject {
         webSocketClient?.sendClipboard(text)
     }
 
-    /// MonitorView registers itself for a specific display index
+    /// MonitorView registers itself for a specific display index.
+    /// Also requests the stream so the Mac sends frames + a keyframe for this display.
     func registerFrameHandler(displayIndex: Int, handler: @escaping (CVPixelBuffer) -> Void) {
         frameUpdateHandlers[displayIndex] = handler
+        // Deliver any frame that was decoded before this handler was registered
+        if let pending = pendingFrames.removeValue(forKey: displayIndex) {
+            handler(pending)
+        }
+        if connectionState == .connected {
+            webSocketClient?.requestStream(displayIndex: displayIndex)
+        }
     }
 
     // Called on decoderQueue
@@ -122,7 +134,13 @@ class AppState: ObservableObject {
             decoder.frameHandler = { [weak self] pixelBuffer, idx in
                 guard let self else { return }
                 self.tickFPS()
-                Task { @MainActor in self.frameUpdateHandlers[idx]?(pixelBuffer) }
+                Task { @MainActor in
+                    if let handler = self.frameUpdateHandlers[idx] {
+                        handler(pixelBuffer)
+                    } else {
+                        self.pendingFrames[idx] = pixelBuffer
+                    }
+                }
             }
             videoDecoders[displayIndex] = decoder
         }

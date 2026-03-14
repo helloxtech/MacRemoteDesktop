@@ -3,6 +3,7 @@ import UIKit
 
 struct KeyboardInputView: UIViewRepresentable {
     @Binding var isActive: Bool
+    @Binding var activeModifiers: Set<String>
     let client: WebSocketClient?
 
     func makeUIView(context: Context) -> InvisibleTextField {
@@ -13,11 +14,13 @@ struct KeyboardInputView: UIViewRepresentable {
         field.spellCheckingType = .no
         field.smartDashesType = .no
         field.smartQuotesType = .no
+        field.text = " "
         return field
     }
 
     func updateUIView(_ view: InvisibleTextField, context: Context) {
         context.coordinator.client = client
+        context.coordinator.activeModifiers = $activeModifiers
         if isActive && !view.isFirstResponder {
             view.becomeFirstResponder()
         } else if !isActive && view.isFirstResponder {
@@ -25,16 +28,19 @@ struct KeyboardInputView: UIViewRepresentable {
         }
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(client: client) }
+    func makeCoordinator() -> Coordinator { Coordinator(client: client, activeModifiers: $activeModifiers) }
 
     class Coordinator: NSObject, UITextFieldDelegate {
         var client: WebSocketClient?
+        var activeModifiers: Binding<Set<String>>
 
-        init(client: WebSocketClient?) { self.client = client }
+        init(client: WebSocketClient?, activeModifiers: Binding<Set<String>>) {
+            self.client = client
+            self.activeModifiers = activeModifiers
+        }
 
         func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
             if string.isEmpty {
-                // Backspace
                 sendKey(keyCode: 51, modifiers: [])
             } else {
                 for char in string {
@@ -43,14 +49,21 @@ struct KeyboardInputView: UIViewRepresentable {
                     }
                 }
             }
-            textField.text = ""
+            textField.text = " "
             return false
         }
 
         private func sendKey(keyCode: Int, modifiers: [String]) {
-            client?.sendKeyboardMessage(KeyboardMessage(keyCode: keyCode, modifiers: modifiers, action: "down"))
+            var allMods = modifiers
+            let sticky = activeModifiers.wrappedValue
+            if !sticky.isEmpty {
+                allMods.append(contentsOf: sticky)
+                DispatchQueue.main.async { self.activeModifiers.wrappedValue.removeAll() }
+            }
+
+            client?.sendKeyboardMessage(KeyboardMessage(keyCode: keyCode, modifiers: allMods, action: "down"))
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                self.client?.sendKeyboardMessage(KeyboardMessage(keyCode: keyCode, modifiers: modifiers, action: "up"))
+                self.client?.sendKeyboardMessage(KeyboardMessage(keyCode: keyCode, modifiers: allMods, action: "up"))
             }
         }
     }

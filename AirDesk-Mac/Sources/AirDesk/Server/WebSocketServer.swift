@@ -3,8 +3,9 @@ import Network
 
 class WebSocketServer: NSObject, H264EncoderDelegate {
 
-    // All access to `connections` must happen on serverQueue
+    // All access to `connections` and `latestKeyframes` must happen on serverQueue
     private var connections: [NWConnection] = []
+    private var latestKeyframes: [Int: Data] = [:]
     private var listener: NWListener?
     private let port: UInt16
     let serverQueue = DispatchQueue(label: "airdesk.server")
@@ -115,6 +116,12 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
         case .requestStream(let msg):
             print("Client requested stream for display \(msg.displayIndex) at \(msg.fps)fps quality=\(msg.quality)")
             encoder?.forceKeyframeOnNextFrame()
+            // Send cached keyframe immediately so client doesn't wait for next screen change
+            if let cached = latestKeyframes[msg.displayIndex] {
+                sendBinary(cached, to: connection)
+            }
+            // Also capture a fresh frame directly — works even when screen is static
+            encoder?.captureAndEncodeImmediate(displayIndex: msg.displayIndex)
         case .unknown:
             break
         }
@@ -148,6 +155,9 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
         let header = VideoFrameHeader(displayIndex: displayIndex, timestampMs: tsMs, isKeyframe: isKeyframe)
         let frame = header.buildFrame(with: data)
         serverQueue.async { [weak self] in
+            if isKeyframe {
+                self?.latestKeyframes[displayIndex] = frame
+            }
             self?.connections.forEach { self?.sendBinary(frame, to: $0) }
         }
     }

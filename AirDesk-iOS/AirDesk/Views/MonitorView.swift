@@ -6,12 +6,10 @@ struct MonitorView: UIViewControllerRepresentable {
 
     let monitor: MonitorInfo
     let displayIndex: Int
-    var onInteraction: (() -> Void)?
     @EnvironmentObject var appState: AppState
 
     func makeUIViewController(context: Context) -> MonitorViewController {
         let vc = MonitorViewController(monitor: monitor, displayIndex: displayIndex)
-        vc.onInteraction = onInteraction
         if let client = appState.webSocketClient {
             vc.configure(client: client)
         }
@@ -23,7 +21,6 @@ struct MonitorView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ vc: MonitorViewController, context: Context) {
-        vc.onInteraction = onInteraction
         appState.registerFrameHandler(displayIndex: displayIndex) { pixelBuffer in
             vc.updateFrame(pixelBuffer)
         }
@@ -37,10 +34,10 @@ class MonitorViewController: UIViewController {
     private var mtkView: MTKView!
     private var renderer: MetalVideoRendererObjC?
     private var inputMapper: TouchInputMapper?
+    private weak var webSocketClient: WebSocketClient?
     private var cursorView: UIView!
     private var scale: CGFloat = 1.0
     private var lastScale: CGFloat = 1.0
-    var onInteraction: (() -> Void)?
 
     init(monitor: MonitorInfo, displayIndex: Int) {
         self.monitor = monitor
@@ -56,6 +53,11 @@ class MonitorViewController: UIViewController {
         setupMetalView()
         setupCursor()
         setupGestures()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        webSocketClient?.requestStream(displayIndex: displayIndex)
     }
 
     private func setupMetalView() {
@@ -85,9 +87,20 @@ class MonitorViewController: UIViewController {
     }
 
     private func setupGestures() {
+        // Double tap = double click
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        view.addGestureRecognizer(doubleTap)
+
         // Single tap = click
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        tap.require(toFail: doubleTap)
         view.addGestureRecognizer(tap)
+
+        // Two-finger tap = right click
+        let twoFingerTap = UITapGestureRecognizer(target: self, action: #selector(handleTwoFingerTap(_:)))
+        twoFingerTap.numberOfTouchesRequired = 2
+        view.addGestureRecognizer(twoFingerTap)
 
         // Long press = right click
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
@@ -114,6 +127,7 @@ class MonitorViewController: UIViewController {
     }
 
     func configure(client: WebSocketClient) {
+        self.webSocketClient = client
         let mapper = TouchInputMapper(client: client)
         mapper.configure(displayIndex: displayIndex, monitor: monitor)
         self.inputMapper = mapper
@@ -123,17 +137,36 @@ class MonitorViewController: UIViewController {
         renderer?.updateFrame(pixelBuffer)
     }
 
+    private func isInContent(_ point: CGPoint) -> Bool {
+        inputMapper?.isInContentArea(point, viewSize: view.bounds.size) ?? false
+    }
+
     @objc private func handleTap(_ gr: UITapGestureRecognizer) {
-        onInteraction?()
         let point = gr.location(in: view)
+        guard isInContent(point) else { return }
         inputMapper?.handleTap(at: point, in: view.bounds.size)
+        flashCursor(at: point)
+    }
+
+    @objc private func handleDoubleTap(_ gr: UITapGestureRecognizer) {
+        let point = gr.location(in: view)
+        guard isInContent(point) else { return }
+        inputMapper?.handleDoubleTap(at: point, in: view.bounds.size)
+        flashCursor(at: point)
+    }
+
+    @objc private func handleTwoFingerTap(_ gr: UITapGestureRecognizer) {
+        let point = gr.location(in: view)
+        guard isInContent(point) else { return }
+        inputMapper?.handleLongPress(at: point, in: view.bounds.size)
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         flashCursor(at: point)
     }
 
     @objc private func handleLongPress(_ gr: UILongPressGestureRecognizer) {
         guard gr.state == .began else { return }
-        onInteraction?()
         let point = gr.location(in: view)
+        guard isInContent(point) else { return }
         inputMapper?.handleLongPress(at: point, in: view.bounds.size)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
@@ -142,7 +175,7 @@ class MonitorViewController: UIViewController {
         let point = gr.location(in: view)
         switch gr.state {
         case .began:
-            onInteraction?()
+            guard isInContent(point) else { return }
             inputMapper?.handleDragBegan(at: point, in: view.bounds.size)
             cursorView.isHidden = false
         case .changed:
@@ -157,7 +190,6 @@ class MonitorViewController: UIViewController {
 
     @objc private func handleScroll(_ gr: UIPanGestureRecognizer) {
         guard gr.state == .changed else { return }
-        onInteraction?()
         // Use translation delta (not velocity) for smooth, proportional scrolling
         let delta = gr.translation(in: view)
         gr.setTranslation(.zero, in: view)

@@ -2,7 +2,7 @@ import UIKit
 
 class TouchInputMapper {
 
-    private weak var client: WebSocketClient?
+    private var client: WebSocketClient?
     private var activeDisplayIndex: Int = 0
     private var monitor: MonitorInfo?
     private var isDragging = false
@@ -11,9 +11,18 @@ class TouchInputMapper {
         self.client = client
     }
 
+    func updateClient(_ client: WebSocketClient) {
+        self.client = client
+    }
+
     func configure(displayIndex: Int, monitor: MonitorInfo) {
         self.activeDisplayIndex = displayIndex
         self.monitor = monitor
+    }
+
+    func handleMove(at point: CGPoint, in viewSize: CGSize) {
+        let n = normalizePoint(point, viewSize: viewSize)
+        send(MouseMessage(x: Float(n.x), y: Float(n.y), action: "move", displayIndex: activeDisplayIndex))
     }
 
     func handleTap(at point: CGPoint, in viewSize: CGSize) {
@@ -59,14 +68,13 @@ class TouchInputMapper {
 
     func handleScroll(deltaX: CGFloat, deltaY: CGFloat, at point: CGPoint, in viewSize: CGSize) {
         let n = normalizePoint(point, viewSize: viewSize)
-        // Negate deltaY: iOS Y increases downward, macOS scroll positive = up
-        // Multiply for comfortable scroll speed
+        // Natural scrolling: same direction as iOS — swipe up = content moves up
         send(MouseMessage(
             x: Float(n.x), y: Float(n.y),
             action: "scroll",
             displayIndex: activeDisplayIndex,
-            scrollDeltaX: Float(deltaX * 0.4),
-            scrollDeltaY: Float(-deltaY * 0.4)   // negated: iOS Y↓ vs Mac scroll +up
+            scrollDeltaX: Float(deltaX * 1.2),
+            scrollDeltaY: Float(deltaY * 1.2)
         ))
     }
 
@@ -100,6 +108,7 @@ class TouchInputMapper {
     }
 
     private func send(_ msg: MouseMessage) {
+        NSLog("[AirDesk] Sending \(msg.action) to display \(msg.displayIndex), client=\(client != nil)")
         client?.sendMouseMessage(msg)
     }
 }

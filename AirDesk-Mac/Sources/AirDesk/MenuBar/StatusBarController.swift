@@ -57,6 +57,7 @@ class StatusBarController: NSObject {
         menu.addItem(quitItem)
 
         statusItem.menu = menu
+        menu.autoenablesItems = false
         updateIcon()
 
         tunnel.urlHandler = { [weak self] url in
@@ -83,6 +84,7 @@ class StatusBarController: NSObject {
     }
 
     private func startSharing() {
+        print("startSharing called")
         server.start()
         capture.startCapture()
         bonjour.start()
@@ -90,6 +92,7 @@ class StatusBarController: NSObject {
         isSharing = true
         toggleItem.title = "Stop Sharing"
         updateIcon()
+        print("startSharing done")
     }
 
     private func stopSharing() {

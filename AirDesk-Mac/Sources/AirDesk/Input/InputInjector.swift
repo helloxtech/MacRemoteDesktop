@@ -3,8 +3,18 @@ import AppKit
 
 class InputInjector: NSObject {
 
+    private var accessibilityWarned = false
+
     func handleMouseMessage(_ msg: MouseMessage) {
-        guard let display = displayForIndex(msg.displayIndex) else { return }
+        if !accessibilityWarned && !AXIsProcessTrusted() {
+            NSLog("[AirDesk] WARNING: Accessibility not granted — mouse/keyboard events will be silently dropped!")
+            accessibilityWarned = true
+        }
+        NSLog("[AirDesk] Mouse: \(msg.action) at (\(msg.x), \(msg.y)) display=\(msg.displayIndex)")
+        guard let display = displayForIndex(msg.displayIndex) else {
+            NSLog("[AirDesk] ERROR: No display found for index \(msg.displayIndex)")
+            return
+        }
 
         let screenBounds = CGDisplayBounds(display)
         let x = screenBounds.origin.x + CGFloat(msg.x) * screenBounds.width
@@ -13,23 +23,31 @@ class InputInjector: NSObject {
 
         switch msg.action {
         case "move":
+            warpCursor(to: point)
             postMouseEvent(type: .mouseMoved, point: point, button: .left)
 
         case "click":
+            warpCursor(to: point)
             postMouseEvent(type: .leftMouseDown, point: point, button: .left)
+            // Small delay so the target app registers the mouseDown before mouseUp.
+            // Some macOS controls (small buttons, tab bar "+") drop instant down-up pairs.
+            usleep(30_000)  // 30ms
             postMouseEvent(type: .leftMouseUp, point: point, button: .left)
 
         case "doubleClick":
+            warpCursor(to: point)
             postMouseEvent(type: .leftMouseDown, point: point, button: .left, clickCount: 1)
             postMouseEvent(type: .leftMouseUp, point: point, button: .left, clickCount: 1)
             postMouseEvent(type: .leftMouseDown, point: point, button: .left, clickCount: 2)
             postMouseEvent(type: .leftMouseUp, point: point, button: .left, clickCount: 2)
 
         case "rightClick":
+            warpCursor(to: point)
             postMouseEvent(type: .rightMouseDown, point: point, button: .right)
             postMouseEvent(type: .rightMouseUp, point: point, button: .right)
 
         case "drag":
+            warpCursor(to: point)
             postMouseEvent(type: .leftMouseDown, point: point, button: .left)
 
         case "mouseDrag":
@@ -41,6 +59,9 @@ class InputInjector: NSObject {
             postMouseEvent(type: .leftMouseUp, point: point, button: .left)
 
         case "scroll":
+            // Warp cursor to scroll position so macOS delivers the event
+            // to the correct window — no separate tap needed on iOS side.
+            warpCursor(to: point)
             let dx = Int32(msg.scrollDeltaX ?? 0)
             let dy = Int32(msg.scrollDeltaY ?? 0)
             if let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0) {
@@ -68,6 +89,16 @@ class InputInjector: NSObject {
         }
         event.flags = flags
         event.post(tap: .cghidEventTap)
+    }
+
+    /// Synchronously moves the cursor to `point`. Unlike mouseMoved CGEvent
+    /// (which is asynchronous), CGWarpMouseCursorPosition is guaranteed to
+    /// complete before returning, so subsequent mouseDown events target the
+    /// correct position.
+    private func warpCursor(to point: CGPoint) {
+        CGWarpMouseCursorPosition(point)
+        // Re-associate so the next real mouse movement isn't treated as a huge delta
+        CGAssociateMouseAndMouseCursorPosition(1)
     }
 
     private func postMouseEvent(type: CGEventType, point: CGPoint, button: CGMouseButton, clickCount: Int64 = 1) {

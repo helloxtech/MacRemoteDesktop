@@ -9,6 +9,7 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
     private var listener: NWListener?
     private let port: UInt16
     let serverQueue = DispatchQueue(label: "airdesk.server")
+    private var lastRefreshTime: CFAbsoluteTime = 0
 
     weak var inputDelegate: InputInjector?
     weak var encoder: H264Encoder?
@@ -34,7 +35,7 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
             self?.serverQueue.async { self?.handleNewConnection(connection) }
         }
         listener.start(queue: serverQueue)
-        print("AirDesk WebSocket server started on port \(port)")
+        print("WebSocket server started on port \(port)")
     }
 
     func stop() {
@@ -59,6 +60,7 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
 
     private func handleNewConnection(_ connection: NWConnection) {
         dispatchPrecondition(condition: .onQueue(serverQueue))
+        print("New WebSocket connection from \(connection.endpoint)")
         connections.append(connection)
         let count = connections.count
         DispatchQueue.main.async { self.clientChangeHandler?(count) }
@@ -103,14 +105,28 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
     }
 
     private func handleTextMessage(_ text: String, from connection: NWConnection) {
+        print("Received text: \(text.prefix(200))")
         let message = parseIncomingMessage(text)
         switch message {
         case .connect:
+            print("Sending screen info")
             sendScreenInfo(to: connection)
         case .mouse(let msg):
             inputDelegate?.handleMouseMessage(msg)
+            // Only capture refresh frames for discrete actions (click, doubleClick, rightClick).
+            // Continuous actions (scroll, drag, move) generate many events per second —
+            // ScreenCaptureKit already captures those screen changes naturally.
+            // Firing CGDisplayCreateImage captures during scroll causes visible flashing
+            // because CGDisplayCreateImage produces frames that look different from SCK.
+            switch msg.action {
+            case "click", "doubleClick", "rightClick", "dragEnd":
+                scheduleRefreshCapture(displayIndex: msg.displayIndex)
+            default:
+                break
+            }
         case .keyboard(let msg):
             inputDelegate?.handleKeyboardMessage(msg)
+            scheduleRefreshCapture(displayIndex: 0)
         case .clipboard(let msg):
             clipboardDelegate?.writeToClipboard(msg.content)
         case .requestStream(let msg):
@@ -148,17 +164,41 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
         connection.send(content: data, contentContext: ctx, isComplete: true, completion: .idempotent)
     }
 
+    /// Triggers CGDisplayCreateImage captures after input events to ensure
+    /// the iOS display refreshes even if ScreenCaptureKit misses the change.
+    /// Fires a short burst of captures to catch UI animations (e.g. new tab
+    /// opening, menu appearing).
+    private func scheduleRefreshCapture(displayIndex: Int) {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now - lastRefreshTime > 0.033 else { return }
+        lastRefreshTime = now
+        // Burst: capture at 10ms, 100ms, 250ms, and 500ms after the event
+        // to catch both instant changes and short animations.
+        for delay in [0.01, 0.1, 0.25, 0.5] {
+            serverQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.encoder?.captureAndEncodeImmediate(displayIndex: displayIndex)
+            }
+        }
+    }
+
     // MARK: - H264EncoderDelegate
+
+    private var broadcastLogCounter = 0
 
     func didEncodeFrame(_ data: Data, isKeyframe: Bool, displayIndex: Int, timestamp: Double) {
         let tsMs = UInt32(timestamp * 1000) & 0xFFFFFFFF
         let header = VideoFrameHeader(displayIndex: displayIndex, timestampMs: tsMs, isKeyframe: isKeyframe)
         let frame = header.buildFrame(with: data)
         serverQueue.async { [weak self] in
-            if isKeyframe {
-                self?.latestKeyframes[displayIndex] = frame
+            guard let self else { return }
+            self.broadcastLogCounter += 1
+            if self.broadcastLogCounter <= 3 || self.broadcastLogCounter % 300 == 0 {
+                print("[AirDesk] Broadcasting frame #\(self.broadcastLogCounter) (\(frame.count) bytes) to \(self.connections.count) clients")
             }
-            self?.connections.forEach { self?.sendBinary(frame, to: $0) }
+            if isKeyframe {
+                self.latestKeyframes[displayIndex] = frame
+            }
+            self.connections.forEach { self.sendBinary(frame, to: $0) }
         }
     }
 }

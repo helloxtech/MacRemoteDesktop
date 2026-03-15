@@ -30,8 +30,9 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
         }
     }
 
-    /// Capture the screen directly via Core Graphics and encode as a keyframe.
+    /// Capture the screen directly via Core Graphics and encode immediately.
     /// Bypasses ScreenCaptureKit, so it works even when the screen is static.
+    /// Encodes as a P-frame (not keyframe) to keep frame size small for fast delivery.
     func captureAndEncodeImmediate(displayIndex: Int) {
         encoderQueue.async { [weak self] in
             guard let self else { return }
@@ -43,7 +44,6 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
             guard displayIndex < sorted.count else { return }
             guard let cgImage = CGDisplayCreateImage(sorted[displayIndex]) else { return }
             guard let pixelBuffer = self.pixelBuffer(from: cgImage) else { return }
-            self.pendingKeyframe.insert(displayIndex)
             self.encodeFrame(pixelBuffer, displayIndex: displayIndex)
         }
     }
@@ -116,8 +116,8 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
 
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel)
-        // 8 Mbps — appropriate for local WiFi; 2 Mbps caused visible blocking artefacts
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: NSNumber(value: 8_000_000))
+        // 15 Mbps — keeps text crisp on local WiFi; hardware encoder handles this easily
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: NSNumber(value: 15_000_000))
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: NSNumber(value: 60))
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: NSNumber(value: 30))
         // Disable frame reordering — eliminates B-frame decode delay for lower latency
@@ -129,8 +129,14 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
         sessions[displayIndex] = session
     }
 
+    private var encodeLogCounter = 0
+
     private func handleEncodedFrame(_ sampleBuffer: CMSampleBuffer, displayIndex: Int, isKeyframe: Bool) {
         guard let dataBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
+        encodeLogCounter += 1
+        if encodeLogCounter <= 3 || encodeLogCounter % 300 == 0 {
+            print("[AirDesk] Encoded frame #\(encodeLogCounter) display=\(displayIndex) keyframe=\(isKeyframe)")
+        }
 
         var annexBData = Data()
 

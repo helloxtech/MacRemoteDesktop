@@ -33,17 +33,13 @@ struct RemoteDesktopView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            // Monitor page view
-            if !appState.monitors.isEmpty {
-                TabView(selection: $appState.activeMonitorIndex) {
-                    ForEach(appState.monitors) { monitor in
-                        MonitorView(monitor: monitor, displayIndex: monitor.id)
-                            .tag(monitor.id)
-                            .ignoresSafeArea()
-                    }
-                }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .ignoresSafeArea()
+            // Active monitor — direct embedding avoids UIPageViewController's
+            // internal UIScrollView which steals pan/tap gestures from our VC.
+            if let monitor = appState.monitors.first(where: { $0.id == appState.activeMonitorIndex })
+                ?? appState.monitors.first {
+                MonitorView(monitor: monitor, displayIndex: monitor.id)
+                    .id(monitor.id)
+                    .ignoresSafeArea()
             }
         }
         // Toggle pill — always visible, top-right
@@ -72,6 +68,8 @@ struct RemoteDesktopView: View {
                     }
 
                     topButton("keyboard", highlight: keyboardVisible) { keyboardVisible.toggle() }
+
+                    topButton("plus.magnifyingglass") { appState.activeMonitorVC?.toggleZoom() }
 
                     Spacer()
                 }

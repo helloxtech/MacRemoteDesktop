@@ -71,8 +71,12 @@ class WebSocketClient: NSObject {
     private func sendJSON<T: Encodable>(_ value: T) {
         guard let data = try? JSONEncoder().encode(value),
               let text = String(data: data, encoding: .utf8) else { return }
-        task?.send(.string(text)) { error in
-            if let error { print("WebSocketClient send error: \(error)") }
+        guard let task else {
+            NSLog("[AirDesk] sendJSON: task is nil, message dropped!")
+            return
+        }
+        task.send(.string(text)) { error in
+            if let error { NSLog("[AirDesk] WebSocketClient send error: \(error)") }
         }
     }
 

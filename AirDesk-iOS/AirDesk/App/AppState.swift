@@ -27,6 +27,8 @@ class AppState: ObservableObject {
 
     // Keyed by displayIndex — fixes the single-handler overwrite bug for multi-monitor
     private var frameUpdateHandlers: [Int: (CVPixelBuffer) -> Void] = [:]
+    // Weak ref to the active MonitorViewController for zoom toggle from toolbar
+    weak var activeMonitorVC: MonitorViewController?
     // Frames decoded before the MonitorView handler is registered
     private var pendingFrames: [Int: CVPixelBuffer] = [:]
 
@@ -39,7 +41,14 @@ class AppState: ObservableObject {
         discoveredHosts = []
         let d = BonjourDiscovery()
         d.hostsUpdated = { [weak self] hosts in
-            Task { @MainActor in self?.discoveredHosts = hosts }
+            Task { @MainActor in
+                self?.discoveredHosts = hosts
+                // DEBUG: Auto-connect to first discovered host
+                if let first = hosts.first, self?.connectionState == .disconnected {
+                    NSLog("[AirDesk] DEBUG: Auto-connecting to \(first.name)")
+                    self?.connect(to: first)
+                }
+            }
         }
         d.start()
         discovery = d

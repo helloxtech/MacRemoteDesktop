@@ -14,6 +14,7 @@ class ScreenCaptureManager: NSObject {
     private(set) var monitorInfos: [MonitorInfo] = []
     private var isCapturing = false
     private let captureQueue = DispatchQueue(label: "airdesk.capture.manager")
+    private var frameLogCounter = 0
 
     func startCapture() {
         captureQueue.async { [weak self] in
@@ -47,9 +48,11 @@ class ScreenCaptureManager: NSObject {
             // Sort displays by displayID so index ordering is deterministic and matches
             // CGGetActiveDisplayList (which also returns displays sorted by ID).
             let sortedDisplays = content.displays.sorted { $0.displayID < $1.displayID }
+            print("[AirDesk] Found \(sortedDisplays.count) displays, \(screens.count) NSScreens")
 
             let infos: [MonitorInfo] = sortedDisplays.enumerated().map { index, display in
                 let scale = screens.first(where: { Int($0.frame.width * $0.backingScaleFactor) == display.width })?.backingScaleFactor ?? 1.0
+                print("[AirDesk] Display \(index): \(display.width)x\(display.height) scale=\(scale) id=\(display.displayID)")
                 return MonitorInfo(id: index, width: display.width, height: display.height, scaleFactor: Float(scale), name: "Display \(index + 1)")
             }
 
@@ -75,10 +78,11 @@ class ScreenCaptureManager: NSObject {
                 }
 
                 try await stream.startCapture()
+                print("[AirDesk] Started capture for display \(index)")
             }
         } catch {
             captureQueue.async { self.isCapturing = false }
-            print("ScreenCaptureManager error: \(error)")
+            print("[AirDesk] ScreenCaptureManager error: \(error)")
         }
     }
 }
@@ -88,6 +92,10 @@ extension ScreenCaptureManager: SCStreamOutput {
         guard type == .screen,
               let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let displayIndex = streamIndexMap[ObjectIdentifier(stream)] ?? 0
+        frameLogCounter += 1
+        if frameLogCounter <= 3 || frameLogCounter % 300 == 0 {
+            print("[AirDesk] SCK frame #\(frameLogCounter) display=\(displayIndex) \(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer))")
+        }
         delegate?.didCaptureFrame(pixelBuffer, displayIndex: displayIndex)
     }
 }

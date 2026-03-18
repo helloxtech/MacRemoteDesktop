@@ -70,7 +70,8 @@ struct KeyboardInputView: UIViewRepresentable {
 }
 
 class InvisibleTextField: UITextField {
-    override var intrinsicContentSize: CGSize { .zero }
+    override var canBecomeFirstResponder: Bool { true }
+    override var intrinsicContentSize: CGSize { CGSize(width: 1, height: 1) }
     override func caretRect(for position: UITextPosition) -> CGRect { .zero }
     override func selectionRects(for range: UITextRange) -> [UITextSelectionRect] { [] }
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool { false }

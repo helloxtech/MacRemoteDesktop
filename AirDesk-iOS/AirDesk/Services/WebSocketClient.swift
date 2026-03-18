@@ -65,6 +65,7 @@ class WebSocketClient: NSObject {
     func sendMouseMessage(_ msg: MouseMessage) { sendJSON(msg) }
     func sendKeyboardMessage(_ msg: KeyboardMessage) { sendJSON(msg) }
     func sendClipboard(_ text: String) { sendJSON(ClipboardMessage(type: "clipboard_push", content: text)) }
+    func sendSystemAction(_ action: String) { sendJSON(SystemActionMessage(action: action)) }
 
     private func sendConnectMessage() { sendJSON(ConnectMessage()) }
 

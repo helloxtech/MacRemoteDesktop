@@ -73,6 +73,25 @@ class InputInjector: NSObject {
         }
     }
 
+    func handleSystemAction(_ msg: SystemActionMessage) {
+        NSLog("[AirDesk] System action received: \(msg.action)")
+        switch msg.action {
+        case "mission_control":
+            // Use /usr/bin/open which reliably launches system apps
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            process.arguments = ["-a", "Mission Control"]
+            do {
+                try process.run()
+                NSLog("[AirDesk] Mission Control launched")
+            } catch {
+                NSLog("[AirDesk] Failed to launch Mission Control: \(error)")
+            }
+        default:
+            NSLog("[AirDesk] Unknown system action: \(msg.action)")
+        }
+    }
+
     func handleKeyboardMessage(_ msg: KeyboardMessage) {
         let keyDown = msg.action == "down"
         guard let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(msg.keyCode), keyDown: keyDown) else { return }

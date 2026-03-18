@@ -13,8 +13,8 @@ struct MonitorView: UIViewControllerRepresentable {
         if let client = appState.webSocketClient {
             vc.configure(client: client)
         }
-        appState.registerFrameHandler(displayIndex: displayIndex) { pixelBuffer in
-            vc.updateFrame(pixelBuffer)
+        appState.registerFrameHandler(displayIndex: displayIndex) { [weak vc] pixelBuffer in
+            vc?.updateFrame(pixelBuffer)
         }
         appState.activeMonitorVC = vc
         return vc
@@ -64,11 +64,20 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    private var mtkBottomConstraint: NSLayoutConstraint!
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
         setupMetalView()
         setupGestures()
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(keyboardWillChangeFrame(_:)),
+            name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(keyboardWillHide(_:)),
+            name: UIResponder.keyboardWillHideNotification, object: nil)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -81,6 +90,10 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         super.viewWillDisappear(animated)
         refreshTimer?.invalidate()
         refreshTimer = nil
+        // Stop Metal rendering immediately to prevent GPU faults from in-flight
+        // command buffers referencing a drawable that's being torn down.
+        mtkView.delegate = nil
+        renderer = nil
     }
 
     /// Periodically requests a fresh stream if no frames arrived recently.
@@ -91,10 +104,11 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             let elapsed = CFAbsoluteTimeGetCurrent() - self.lastFrameTime
-            // If no frame for >2s, request a fresh keyframe.
-            // Use a generous threshold so normal playback is never interrupted.
+            // If no frame for >2s, request a fresh keyframe and force a redraw
+            // so the screen recovers from any stale/black state.
             if elapsed > 2.0 {
                 self.webSocketClient?.requestStream(displayIndex: self.displayIndex)
+                self.mtkView.setNeedsDisplay()
             }
         }
     }
@@ -107,15 +121,24 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
 
     private func setupMetalView() {
         guard let device = MTLCreateSystemDefaultDevice() else { return }
-        mtkView = MTKView(frame: view.bounds, device: device)
-        mtkView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        mtkView.framebufferOnly = false
+        mtkView = MTKView(frame: .zero, device: device)
+        mtkView.translatesAutoresizingMaskIntoConstraints = false
+        mtkView.framebufferOnly = true
         mtkView.colorPixelFormat = .bgra8Unorm
-        mtkView.preferredFramesPerSecond = 30
-        mtkView.isPaused = false
-        mtkView.enableSetNeedsDisplay = false
+        // On-demand rendering: only draw when a new frame arrives.
+        // Avoids ~29 redundant GPU draws/sec on slower devices (A8).
+        mtkView.isPaused = true
+        mtkView.enableSetNeedsDisplay = true
         mtkView.backgroundColor = .black
         view.addSubview(mtkView)
+
+        mtkBottomConstraint = mtkView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        NSLayoutConstraint.activate([
+            mtkView.topAnchor.constraint(equalTo: view.topAnchor),
+            mtkView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            mtkView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            mtkBottomConstraint,
+        ])
 
         renderer = MetalVideoRendererObjC(device: device, mtkView: mtkView)
     }
@@ -198,6 +221,7 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
     func updateFrame(_ pixelBuffer: CVPixelBuffer) {
         lastFrameTime = CFAbsoluteTimeGetCurrent()
         renderer?.updateFrame(pixelBuffer)
+        mtkView.setNeedsDisplay()
     }
 
     /// Toggle between 1x (fit) and 2x (readable text) zoom.
@@ -443,22 +467,74 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
             self.mtkView.transform = .identity
         }
     }
+
+    // MARK: - Keyboard Avoidance
+
+    @objc private func keyboardWillChangeFrame(_ note: Notification) {
+        guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+        let localFrame = view.convert(frame, from: nil)
+        let overlap = max(0, view.bounds.maxY - localFrame.minY)
+        mtkBottomConstraint.constant = -overlap
+        UIView.animate(withDuration: duration) { self.view.layoutIfNeeded() }
+    }
+
+    @objc private func keyboardWillHide(_ note: Notification) {
+        let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+        mtkBottomConstraint.constant = 0
+        UIView.animate(withDuration: duration) { self.view.layoutIfNeeded() }
+    }
 }
 
-// Thin ObjC-compatible wrapper so MTKViewDelegate can be retained properly
+// Direct Metal renderer using CVMetalTextureCache — avoids CIContext for maximum
+// compatibility with older devices (A8 / iOS 15).
 class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
-    private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
-    private let ciContext: CIContext
+    private var textureCache: CVMetalTextureCache?
+    private var pipelineState: MTLRenderPipelineState?
     private var currentPixelBuffer: CVPixelBuffer?
     private let lock = NSLock()
 
+    // Cached aspect-fit vertices — recomputed only when dimensions change
+    private var cachedVerts: [SIMD4<Float>]?
+    private var lastImgW = 0, lastImgH = 0
+    private var lastDrawW: Float = 0, lastDrawH: Float = 0
+
     init?(device: MTLDevice, mtkView: MTKView) {
         guard let queue = device.makeCommandQueue() else { return nil }
-        self.device = device
         self.commandQueue = queue
-        self.ciContext = CIContext(mtlDevice: device, options: [.workingColorSpace: NSNull()])
         super.init()
+
+        var cache: CVMetalTextureCache?
+        CVMetalTextureCacheCreate(nil, nil, device, nil, &cache)
+        guard let cache = cache else { return nil }
+        self.textureCache = cache
+
+        let shaderSrc = """
+        #include <metal_stdlib>
+        using namespace metal;
+        struct V { float4 position [[position]]; float2 uv; };
+        vertex V vs(uint vid [[vertex_id]], constant float4 *d [[buffer(0)]]) {
+            V o; o.position = float4(d[vid].xy, 0, 1); o.uv = d[vid].zw; return o;
+        }
+        fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]]) {
+            constexpr sampler s(mag_filter::linear, min_filter::linear);
+            return t.sample(s, in.uv);
+        }
+        """
+        guard let lib = try? device.makeLibrary(source: shaderSrc, options: nil) else {
+            NSLog("[AirDesk] Failed to compile Metal shaders")
+            return nil
+        }
+        let desc = MTLRenderPipelineDescriptor()
+        desc.vertexFunction = lib.makeFunction(name: "vs")
+        desc.fragmentFunction = lib.makeFunction(name: "fs")
+        desc.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+        guard let ps = try? device.makeRenderPipelineState(descriptor: desc) else {
+            NSLog("[AirDesk] Failed to create pipeline state")
+            return nil
+        }
+        self.pipelineState = ps
         mtkView.delegate = self
     }
 
@@ -466,22 +542,60 @@ class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
         lock.lock(); currentPixelBuffer = pixelBuffer; lock.unlock()
     }
 
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        lastDrawW = 0; lastDrawH = 0
+        view.setNeedsDisplay()
+    }
 
     func draw(in view: MTKView) {
         lock.lock(); let pb = currentPixelBuffer; lock.unlock()
-        guard let pb, let drawable = view.currentDrawable, let cb = commandQueue.makeCommandBuffer() else { return }
+        guard let pb,
+              let textureCache = textureCache,
+              let pipelineState = pipelineState,
+              let drawable = view.currentDrawable,
+              let cb = commandQueue.makeCommandBuffer() else { return }
 
-        let image = CIImage(cvPixelBuffer: pb)
-        let drawableSize = view.drawableSize
-        let imgSize = CGSize(width: CVPixelBufferGetWidth(pb), height: CVPixelBufferGetHeight(pb))
-        let scale = min(drawableSize.width / imgSize.width, drawableSize.height / imgSize.height)
-        let sx = (drawableSize.width - imgSize.width * scale) / 2
-        let sy = (drawableSize.height - imgSize.height * scale) / 2
-        let scaled = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale).translatedBy(x: sx / scale, y: sy / scale))
+        let w = CVPixelBufferGetWidth(pb)
+        let h = CVPixelBufferGetHeight(pb)
+        var cvTex: CVMetalTexture?
+        let status = CVMetalTextureCacheCreateTextureFromImage(
+            nil, textureCache, pb, nil, .bgra8Unorm, w, h, 0, &cvTex)
+        guard status == kCVReturnSuccess, let cvTex = cvTex,
+              let texture = CVMetalTextureGetTexture(cvTex) else { return }
 
-        let dest = CIRenderDestination(width: Int(drawableSize.width), height: Int(drawableSize.height), pixelFormat: view.colorPixelFormat, commandBuffer: cb) { drawable.texture }
-        try? ciContext.startTask(toRender: scaled, to: dest)
-        cb.present(drawable); cb.commit()
+        // Recompute aspect-fit vertices only when dimensions change
+        let dw = Float(view.drawableSize.width), dh = Float(view.drawableSize.height)
+        if w != lastImgW || h != lastImgH || dw != lastDrawW || dh != lastDrawH {
+            lastImgW = w; lastImgH = h; lastDrawW = dw; lastDrawH = dh
+            let imgAspect = Float(w) / Float(max(h, 1))
+            let viewAspect = dw / max(dh, 1)
+            var sx: Float = 1, sy: Float = 1
+            if imgAspect > viewAspect { sy = viewAspect / imgAspect }
+            else { sx = imgAspect / viewAspect }
+            cachedVerts = [
+                SIMD4(-sx, -sy, 0, 1), SIMD4(sx, -sy, 1, 1), SIMD4(-sx, sy, 0, 0),
+                SIMD4(sx, -sy, 1, 1), SIMD4(sx, sy, 1, 0), SIMD4(-sx, sy, 0, 0),
+            ]
+        }
+        guard let verts = cachedVerts else { return }
+
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = drawable.texture
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        pass.colorAttachments[0].storeAction = .store
+
+        guard let enc = cb.makeRenderCommandEncoder(descriptor: pass) else { return }
+        enc.setRenderPipelineState(pipelineState)
+        enc.setVertexBytes(verts, length: MemoryLayout<SIMD4<Float>>.stride * 6, index: 0)
+        enc.setFragmentTexture(texture, index: 0)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+        enc.endEncoding()
+
+        // Retain CVMetalTexture until the GPU finishes — the MTLTexture is just
+        // a view into the IOSurface and becomes invalid once cvTex is released.
+        cb.addCompletedHandler { _ in _ = cvTex }
+        cb.present(drawable)
+        cb.commit()
     }
 }

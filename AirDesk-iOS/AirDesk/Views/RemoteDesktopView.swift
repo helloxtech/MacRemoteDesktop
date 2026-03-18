@@ -5,6 +5,9 @@ struct RemoteDesktopView: View {
     @State private var keyboardVisible = false
     @State private var toolbarVisible = false
     @State private var activeModifiers: Set<String> = []
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    private var isRegular: Bool { sizeClass == .regular }
 
     private func toggleToolbar() {
         withAnimation(.easeInOut(duration: 0.25)) { toolbarVisible.toggle() }
@@ -46,19 +49,19 @@ struct RemoteDesktopView: View {
         .overlay(alignment: .topTrailing) {
             Button(action: toggleToolbar) {
                 Image(systemName: toolbarVisible ? "chevron.down" : "ellipsis")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: isRegular ? 15 : 11, weight: .bold))
                     .foregroundColor(.white)
-                    .frame(width: 36, height: 28)
+                    .frame(width: isRegular ? 48 : 36, height: isRegular ? 36 : 28)
                     .background(.ultraThinMaterial)
-                    .cornerRadius(14)
+                    .cornerRadius(isRegular ? 18 : 14)
             }
-            .padding(.trailing, 8)
-            .padding(.top, 6)
+            .padding(.trailing, isRegular ? 16 : 8)
+            .padding(.top, isRegular ? 12 : 6)
         }
         // Top bar — toggled
         .overlay(alignment: .top) {
             if toolbarVisible {
-                HStack(spacing: 6) {
+                HStack(spacing: isRegular ? 10 : 6) {
                     topButton("xmark") { appState.disconnect() }
 
                     if appState.monitors.count > 1 {
@@ -71,10 +74,13 @@ struct RemoteDesktopView: View {
 
                     topButton("plus.magnifyingglass") { appState.activeMonitorVC?.toggleZoom() }
 
+                    // Mission Control — shows all Mac windows for easy app switching
+                    topButton("square.on.square") { appState.webSocketClient?.sendSystemAction("mission_control") }
+
                     Spacer()
                 }
-                .padding(.horizontal, 8)
-                .padding(.top, 6)
+                .padding(.horizontal, isRegular ? 16 : 8)
+                .padding(.top, isRegular ? 12 : 6)
                 .transition(.opacity)
             }
         }
@@ -82,7 +88,7 @@ struct RemoteDesktopView: View {
         .overlay(alignment: .bottom) {
             if toolbarVisible {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 5) {
+                    HStack(spacing: isRegular ? 8 : 5) {
                         iconButton("arrow.left") { sendKey(123) }
                         iconButton("arrow.down") { sendKey(125) }
                         iconButton("arrow.up") { sendKey(126) }
@@ -105,22 +111,23 @@ struct RemoteDesktopView: View {
 
                         iconButton("doc.on.clipboard") { appState.pushClipboardToMac() }
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, isRegular ? 16 : 10)
+                    .padding(.vertical, isRegular ? 12 : 8)
                 }
                 .background(.ultraThinMaterial)
-                .cornerRadius(14)
-                .padding(.horizontal, 6)
-                .padding(.bottom, 6)
+                .cornerRadius(isRegular ? 18 : 14)
+                .padding(.horizontal, isRegular ? 12 : 6)
+                .padding(.bottom, isRegular ? 12 : 6)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .overlay(
             KeyboardInputView(isActive: $keyboardVisible, activeModifiers: $activeModifiers, client: appState.webSocketClient)
-                .frame(width: 0, height: 0)
+                .frame(width: 1, height: 1)
+                .opacity(0.01)
         )
         .statusBar(hidden: true)
-        .persistentSystemOverlays(.hidden)
+        .hidePersistentSystemOverlays()
     }
 
     // MARK: - Top Bar Buttons
@@ -128,28 +135,28 @@ struct RemoteDesktopView: View {
     private func topButton(_ icon: String, highlight: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: isRegular ? 16 : 12, weight: .semibold))
                 .foregroundColor(highlight ? .yellow : .white)
-                .frame(width: 32, height: 28)
+                .frame(width: isRegular ? 44 : 32, height: isRegular ? 36 : 28)
                 .background(.ultraThinMaterial)
-                .cornerRadius(14)
+                .cornerRadius(isRegular ? 18 : 14)
         }
     }
 
     private func topMonitorButton(_ monitor: MonitorInfo) -> some View {
         let selected = appState.activeMonitorIndex == monitor.id
         return Button { appState.selectMonitor(monitor.id) } label: {
-            HStack(spacing: 3) {
+            HStack(spacing: isRegular ? 5 : 3) {
                 Image(systemName: "display")
-                    .font(.system(size: 9))
+                    .font(.system(size: isRegular ? 12 : 9))
                 Text("\(monitor.id + 1)")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: isRegular ? 14 : 11, weight: .semibold))
             }
             .foregroundColor(selected ? .black : .white)
-            .padding(.horizontal, 7)
-            .frame(height: 28)
+            .padding(.horizontal, isRegular ? 10 : 7)
+            .frame(height: isRegular ? 36 : 28)
             .background(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.ultraThinMaterial))
-            .cornerRadius(14)
+            .cornerRadius(isRegular ? 18 : 14)
             .animation(.spring(response: 0.3), value: selected)
         }
     }
@@ -159,23 +166,23 @@ struct RemoteDesktopView: View {
     private func iconButton(_ icon: String, highlight: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: isRegular ? 17 : 13, weight: .semibold))
                 .foregroundColor(highlight ? .yellow : .white)
-                .frame(width: 36, height: 36)
+                .frame(width: isRegular ? 48 : 36, height: isRegular ? 48 : 36)
                 .background(Color.white.opacity(highlight ? 0.18 : 0.06))
-                .cornerRadius(8)
+                .cornerRadius(isRegular ? 10 : 8)
         }
     }
 
     private func labelButton(_ label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: isRegular ? 16 : 12, weight: .semibold))
                 .foregroundColor(.white)
-                .frame(minWidth: 36, minHeight: 36)
+                .frame(minWidth: isRegular ? 48 : 36, minHeight: isRegular ? 48 : 36)
                 .padding(.horizontal, 2)
                 .background(Color.white.opacity(0.06))
-                .cornerRadius(8)
+                .cornerRadius(isRegular ? 10 : 8)
         }
     }
 
@@ -183,11 +190,11 @@ struct RemoteDesktopView: View {
         let active = activeModifiers.contains(mod)
         return Button { toggleModifier(mod) } label: {
             Text(symbol)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: isRegular ? 20 : 15, weight: .semibold))
                 .foregroundColor(active ? .black : .white)
-                .frame(width: 38, height: 36)
+                .frame(width: isRegular ? 50 : 38, height: isRegular ? 48 : 36)
                 .background(active ? Color.white : Color.white.opacity(0.06))
-                .cornerRadius(8)
+                .cornerRadius(isRegular ? 10 : 8)
                 .animation(.easeInOut(duration: 0.15), value: active)
         }
     }
@@ -195,8 +202,19 @@ struct RemoteDesktopView: View {
     private var separator: some View {
         Rectangle()
             .fill(Color.white.opacity(0.15))
-            .frame(width: 1, height: 24)
-            .padding(.horizontal, 2)
+            .frame(width: 1, height: isRegular ? 32 : 24)
+            .padding(.horizontal, isRegular ? 4 : 2)
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func hidePersistentSystemOverlays() -> some View {
+        if #available(iOS 16.0, *) {
+            self.persistentSystemOverlays(.hidden)
+        } else {
+            self
+        }
     }
 }
 

@@ -94,3 +94,13 @@ struct ClipboardMessage: Codable {
     let type: String
     let content: String
 }
+
+struct SystemActionMessage: Codable {
+    let type: String
+    let action: String
+
+    init(action: String) {
+        type = "system_action"
+        self.action = action
+    }
+}

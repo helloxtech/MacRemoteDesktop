@@ -5,28 +5,31 @@ struct ConnectionView: View {
     @State private var manualIP = ""
     @State private var manualPort = "7890"
     @FocusState private var ipFieldFocused: Bool
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    private var isRegular: Bool { sizeClass == .regular }
 
     var body: some View {
-        NavigationStack {
+        NavigationView {
             ZStack {
                 Color(.systemGroupedBackground).ignoresSafeArea()
 
                 ScrollView {
-                    VStack(spacing: 28) {
+                    VStack(spacing: isRegular ? 36 : 28) {
                         // Hero
-                        VStack(spacing: 8) {
+                        VStack(spacing: isRegular ? 12 : 8) {
                             Image(systemName: "desktopcomputer")
-                                .font(.system(size: 56, weight: .thin))
+                                .font(.system(size: isRegular ? 80 : 56, weight: .thin))
                                 .foregroundStyle(
                                     LinearGradient(colors: [.blue, .cyan], startPoint: .topLeading, endPoint: .bottomTrailing)
                                 )
                             Text("AirDesk")
-                                .font(.largeTitle.bold())
+                                .font(isRegular ? .system(size: 44, weight: .bold) : .largeTitle.bold())
                             Text("Remote Desktop for Mac")
-                                .font(.subheadline)
+                                .font(isRegular ? .body : .subheadline)
                                 .foregroundColor(.secondary)
                         }
-                        .padding(.top, 32)
+                        .padding(.top, isRegular ? 60 : 32)
 
                         // Discovered Macs
                         VStack(alignment: .leading, spacing: 12) {
@@ -56,7 +59,7 @@ struct ConnectionView: View {
                             } else {
                                 VStack(spacing: 0) {
                                     ForEach(Array(appState.discoveredHosts.enumerated()), id: \.element.id) { index, host in
-                                        HostRow(host: host) {
+                                        HostRow(host: host, isRegular: isRegular) {
                                             appState.connect(to: host)
                                         }
                                         if index < appState.discoveredHosts.count - 1 {
@@ -84,10 +87,10 @@ struct ConnectionView: View {
                                     TextField("e.g. 192.168.1.10", text: $manualIP)
                                         .multilineTextAlignment(.trailing)
                                         .keyboardType(.numbersAndPunctuation)
-                                        .autocorrectionDisabled()
+                                        .disableAutocorrection(true)
                                         .focused($ipFieldFocused)
                                 }
-                                .padding()
+                                .padding(isRegular ? 16 : 12)
 
                                 Divider().padding(.leading)
 
@@ -99,7 +102,7 @@ struct ConnectionView: View {
                                         .multilineTextAlignment(.trailing)
                                         .keyboardType(.numberPad)
                                 }
-                                .padding()
+                                .padding(isRegular ? 16 : 12)
                             }
                             .background(Color(.secondarySystemGroupedBackground))
                             .cornerRadius(12)
@@ -108,7 +111,7 @@ struct ConnectionView: View {
                                 Text("Connect")
                                     .font(.headline)
                                     .frame(maxWidth: .infinity)
-                                    .padding()
+                                    .padding(isRegular ? 16 : 12)
                                     .background(manualIP.isEmpty ? Color.gray : Color.blue)
                                     .foregroundColor(.white)
                                     .cornerRadius(12)
@@ -134,6 +137,8 @@ struct ConnectionView: View {
 
                         Spacer(minLength: 40)
                     }
+                    .frame(maxWidth: isRegular ? 560 : .infinity)
+                    .frame(maxWidth: .infinity) // center the constrained content
                 }
             }
             .navigationTitle("")
@@ -151,21 +156,22 @@ struct ConnectionView: View {
 
 struct HostRow: View {
     let host: DiscoveredHost
+    var isRegular: Bool = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 14) {
+            HStack(spacing: isRegular ? 18 : 14) {
                 Image(systemName: "desktopcomputer")
-                    .font(.title2)
+                    .font(isRegular ? .title : .title2)
                     .foregroundColor(.blue)
-                    .frame(width: 36)
+                    .frame(width: isRegular ? 44 : 36)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(host.name)
-                        .font(.body.weight(.medium))
+                        .font(isRegular ? .body.weight(.semibold) : .body.weight(.medium))
                         .foregroundColor(.primary)
                     Text(host.host)
-                        .font(.caption)
+                        .font(isRegular ? .subheadline : .caption)
                         .foregroundColor(.secondary)
                 }
                 Spacer()
@@ -173,7 +179,7 @@ struct HostRow: View {
                     .font(.caption)
                     .foregroundColor(Color(UIColor.tertiaryLabel))
             }
-            .padding()
+            .padding(isRegular ? 16 : 12)
         }
     }
 }

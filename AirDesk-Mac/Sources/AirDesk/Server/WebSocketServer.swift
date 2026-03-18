@@ -129,6 +129,8 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
             scheduleRefreshCapture(displayIndex: 0)
         case .clipboard(let msg):
             clipboardDelegate?.writeToClipboard(msg.content)
+        case .systemAction(let msg):
+            DispatchQueue.main.async { self.inputDelegate?.handleSystemAction(msg) }
         case .requestStream(let msg):
             print("Client requested stream for display \(msg.displayIndex) at \(msg.fps)fps quality=\(msg.quality)")
             encoder?.forceKeyframeOnNextFrame()

@@ -105,7 +105,12 @@ class VideoDecoder {
 
         var outputCallback = VTDecompressionOutputCallbackRecord(
             decompressionOutputCallback: { refCon, _, status, _, imageBuffer, _, _ in
-                guard status == noErr, let imageBuffer = imageBuffer else { return }
+                guard status == noErr, let imageBuffer = imageBuffer else {
+                    if status != noErr {
+                        NSLog("[AirDesk] VT decode error: %d", Int(status))
+                    }
+                    return
+                }
                 let decoder = Unmanaged<VideoDecoder>.fromOpaque(refCon!).takeUnretainedValue()
                 decoder.frameHandler?(imageBuffer, decoder.displayIndex)
             },

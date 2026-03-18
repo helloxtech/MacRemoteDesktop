@@ -114,6 +114,12 @@ class AppState: ObservableObject {
     }
 
     func selectMonitor(_ index: Int) {
+        // Remove old frame handler so the old VC can be fully released
+        let oldIndex = activeMonitorIndex
+        if oldIndex != index {
+            frameUpdateHandlers.removeValue(forKey: oldIndex)
+            pendingFrames.removeValue(forKey: oldIndex)
+        }
         activeMonitorIndex = index
         webSocketClient?.requestStream(displayIndex: index)
     }

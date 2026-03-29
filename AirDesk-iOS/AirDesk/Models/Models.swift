@@ -95,6 +95,12 @@ struct ClipboardMessage: Codable {
     let content: String
 }
 
+struct LockStatusMessage: Codable {
+    let type: String
+    let isLocked: Bool
+    let message: String
+}
+
 struct SystemActionMessage: Codable {
     let type: String
     let action: String

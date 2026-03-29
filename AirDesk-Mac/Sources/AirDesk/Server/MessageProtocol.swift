@@ -72,6 +72,52 @@ struct SystemActionMessage: Codable {
     let action: String  // "mission_control"
 }
 
+// MARK: - Lock Status (Mac → iOS)  ← NEW
+struct LockStatusMessage: Codable {
+    let type: String = "lock_status"
+    let isLocked: Bool
+    let message: String
+}
+
+@MainActor
+final class LockStatusMonitor {
+    static let shared = LockStatusMonitor()
+
+    private(set) var isLocked = false
+    private var observers: [Any] = []
+
+    private init() {
+        let center = DistributedNotificationCenter.default()
+        observers.append(center.addObserver(
+            forName: Notification.Name("com.apple.screenIsLocked"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.update(isLocked: true)
+            }
+        })
+        observers.append(center.addObserver(
+            forName: Notification.Name("com.apple.screenIsUnlocked"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.update(isLocked: false)
+            }
+        })
+    }
+
+    private func update(isLocked: Bool) {
+        self.isLocked = isLocked
+        NotificationCenter.default.post(name: .screenLockStatusChanged, object: isLocked)
+    }
+}
+
+extension Notification.Name {
+    static let screenLockStatusChanged = Notification.Name("screenLockStatusChanged")
+}
+
 // MARK: - Binary Video Frame Header
 
 struct VideoFrameHeader {

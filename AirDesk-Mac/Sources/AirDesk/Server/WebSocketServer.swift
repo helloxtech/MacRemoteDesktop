@@ -3,13 +3,16 @@ import Network
 
 class WebSocketServer: NSObject, H264EncoderDelegate {
 
-    // All access to `connections` and `latestKeyframes` must happen on serverQueue
+    // All access to `connections`, `latestKeyframes`, and `pendingSendCount` must happen on serverQueue
     private var connections: [NWConnection] = []
     private var latestKeyframes: [Int: Data] = [:]
+    private var pendingSendCount: [ObjectIdentifier: Int] = [:]
+    private var awaitingKeyframe: Set<ObjectIdentifier> = []
     private var listener: NWListener?
     private let port: UInt16
     let serverQueue = DispatchQueue(label: "airdesk.server")
     private var lastRefreshTime: CFAbsoluteTime = 0
+    private var lockObserver: Any?
 
     weak var inputDelegate: InputInjector?
     weak var encoder: H264Encoder?
@@ -36,6 +39,7 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
         }
         listener.start(queue: serverQueue)
         print("WebSocket server started on port \(port)")
+        setupLockDetection()
     }
 
     func stop() {
@@ -45,6 +49,12 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
             self.listener = nil
             self.connections.forEach { $0.cancel() }
             self.connections.removeAll()
+            self.pendingSendCount.removeAll()
+            self.awaitingKeyframe.removeAll()
+            if let observer = self.lockObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            self.lockObserver = nil
         }
     }
 
@@ -53,6 +63,49 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
     func broadcastText(_ text: String) {
         serverQueue.async { [weak self] in
             self?.connections.forEach { self?.sendText(text, to: $0) }
+        }
+    }
+
+    // MARK: - Lock Detection
+
+    private func setupLockDetection() {
+        Task { @MainActor in
+            _ = LockStatusMonitor.shared
+        }
+        lockObserver = NotificationCenter.default.addObserver(
+            forName: .screenLockStatusChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let isLocked = notification.object as? Bool else { return }
+            self?.broadcastLockStatus(isLocked)
+        }
+    }
+
+    private func broadcastLockStatus(_ isLocked: Bool) {
+        let statusMsg = LockStatusMessage(
+            isLocked: isLocked,
+            message: isLocked ? "Screen is locked — viewing only" : "Control ready"
+        )
+        guard let data = try? JSONEncoder().encode(statusMsg),
+              let text = String(data: data, encoding: .utf8) else { return }
+        broadcastText(text)
+        guard !isLocked else { return }
+        encoder?.forceKeyframeOnNextFrame()
+        refreshAllDisplays()
+    }
+
+    func handleMonitorConfigurationChange(_ monitors: [MonitorInfo]) {
+        serverQueue.async { [weak self] in
+            guard let self else { return }
+            self.latestKeyframes = self.latestKeyframes.filter { $0.key < monitors.count }
+            self.awaitingKeyframe.removeAll()
+            let msg = ScreenInfoMessage(monitors: monitors)
+            guard let data = try? JSONEncoder().encode(msg),
+                  let text = String(data: data, encoding: .utf8) else { return }
+            self.connections.forEach { self.sendText(text, to: $0) }
+            self.encoder?.forceKeyframeOnNextFrame()
+            self.refreshAllDisplays()
         }
     }
 
@@ -71,6 +124,9 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
             self.serverQueue.async {
                 switch state {
                 case .failed, .cancelled:
+                    let id = ObjectIdentifier(connection)
+                    self.pendingSendCount.removeValue(forKey: id)
+                    self.awaitingKeyframe.remove(id)
                     self.connections.removeAll { $0 === connection }
                     let count = self.connections.count
                     DispatchQueue.main.async { self.clientChangeHandler?(count) }
@@ -111,6 +167,7 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
         case .connect:
             print("Sending screen info")
             sendScreenInfo(to: connection)
+            sendCurrentLockStatus(to: connection)
         case .mouse(let msg):
             inputDelegate?.handleMouseMessage(msg)
             // Only capture refresh frames for discrete actions (click, doubleClick, rightClick).
@@ -161,9 +218,44 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
     }
 
     private func sendBinary(_ data: Data, to connection: NWConnection) {
+        let id = ObjectIdentifier(connection)
+        pendingSendCount[id, default: 0] += 1
         let metadata = NWProtocolWebSocket.Metadata(opcode: .binary)
         let ctx = NWConnection.ContentContext(identifier: "binary", metadata: [metadata])
-        connection.send(content: data, contentContext: ctx, isComplete: true, completion: .idempotent)
+        connection.send(content: data, contentContext: ctx, isComplete: true, completion: .contentProcessed({ [weak self] _ in
+            self?.serverQueue.async {
+                let count = self?.pendingSendCount[id, default: 1] ?? 1
+                self?.pendingSendCount[id] = max(0, count - 1)
+            }
+        }))
+    }
+
+    private func sendCurrentLockStatus(to connection: NWConnection) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let status = LockStatusMonitor.shared.isLocked
+            self.serverQueue.async {
+                let msg = LockStatusMessage(
+                    isLocked: status,
+                    message: status ? "Screen is locked — viewing only" : "Control ready"
+                )
+                guard let data = try? JSONEncoder().encode(msg),
+                      let text = String(data: data, encoding: .utf8) else { return }
+                self.sendText(text, to: connection)
+            }
+        }
+    }
+
+    private func refreshAllDisplays() {
+        let displayCount = monitorInfoProvider?().count ?? 0
+        guard displayCount > 0 else { return }
+        for index in 0..<displayCount {
+            for delay in [0.02, 0.15, 0.4] {
+                serverQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.encoder?.captureAndEncodeImmediate(displayIndex: index)
+                }
+            }
+        }
     }
 
     /// Triggers CGDisplayCreateImage captures after input events to ensure
@@ -193,6 +285,7 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
         let frame = header.buildFrame(with: data)
         serverQueue.async { [weak self] in
             guard let self else { return }
+            var shouldForceKeyframe = false
             self.broadcastLogCounter += 1
             if self.broadcastLogCounter <= 3 || self.broadcastLogCounter % 300 == 0 {
                 print("[AirDesk] Broadcasting frame #\(self.broadcastLogCounter) (\(frame.count) bytes) to \(self.connections.count) clients")
@@ -200,7 +293,27 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
             if isKeyframe {
                 self.latestKeyframes[displayIndex] = frame
             }
-            self.connections.forEach { self.sendBinary(frame, to: $0) }
+            for conn in self.connections {
+                let id = ObjectIdentifier(conn)
+                if self.awaitingKeyframe.contains(id) {
+                    if isKeyframe {
+                        self.awaitingKeyframe.remove(id)
+                        self.sendBinary(frame, to: conn)
+                    }
+                    continue
+                }
+
+                let pending = self.pendingSendCount[id, default: 0]
+                if pending < 3 || isKeyframe {
+                    self.sendBinary(frame, to: conn)
+                } else {
+                    self.awaitingKeyframe.insert(id)
+                    shouldForceKeyframe = true
+                }
+            }
+            if shouldForceKeyframe {
+                self.encoder?.forceKeyframeOnNextFrame()
+            }
         }
     }
 }

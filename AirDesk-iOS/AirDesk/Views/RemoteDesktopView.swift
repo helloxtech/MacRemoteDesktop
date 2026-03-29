@@ -45,44 +45,59 @@ struct RemoteDesktopView: View {
                     .ignoresSafeArea()
             }
         }
-        // Toggle pill — always visible, top-right
+        // Toggle pill + latency badge — always visible, top-right
         .overlay(alignment: .topTrailing) {
-            Button(action: toggleToolbar) {
-                Image(systemName: toolbarVisible ? "chevron.down" : "ellipsis")
-                    .font(.system(size: isRegular ? 15 : 11, weight: .bold))
-                    .foregroundColor(.white)
-                    .frame(width: isRegular ? 48 : 36, height: isRegular ? 36 : 28)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(isRegular ? 18 : 14)
+            HStack(spacing: isRegular ? 8 : 5) {
+                LatencyBadge(ms: appState.latencyMs, fps: appState.decodedFPS)
+                Button(action: toggleToolbar) {
+                    Image(systemName: toolbarVisible ? "chevron.down" : "ellipsis")
+                        .font(.system(size: isRegular ? 15 : 11, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(width: isRegular ? 48 : 36, height: isRegular ? 36 : 28)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(isRegular ? 18 : 14)
+                }
             }
             .padding(.trailing, isRegular ? 16 : 8)
             .padding(.top, isRegular ? 12 : 6)
         }
         // Top bar — toggled
         .overlay(alignment: .top) {
-            if toolbarVisible {
-                HStack(spacing: isRegular ? 10 : 6) {
-                    topButton("xmark") { appState.disconnect() }
-
-                    if appState.monitors.count > 1 {
-                        ForEach(appState.monitors) { monitor in
-                            topMonitorButton(monitor)
-                        }
-                    }
-
-                    topButton("keyboard", highlight: keyboardVisible) { keyboardVisible.toggle() }
-
-                    topButton("plus.magnifyingglass") { appState.activeMonitorVC?.toggleZoom() }
-
-                    // Mission Control — shows all Mac windows for easy app switching
-                    topButton("square.on.square") { appState.webSocketClient?.sendSystemAction("mission_control") }
-
-                    Spacer()
+            VStack(spacing: isRegular ? 8 : 6) {
+                if appState.isHostLocked {
+                    Text(appState.hostStatusMessage ?? "Mac is locked")
+                        .font(.system(size: isRegular ? 13 : 11, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, isRegular ? 14 : 10)
+                        .padding(.vertical, isRegular ? 8 : 6)
+                        .background(Color.black.opacity(0.72))
+                        .clipShape(Capsule())
                 }
-                .padding(.horizontal, isRegular ? 16 : 8)
-                .padding(.top, isRegular ? 12 : 6)
-                .transition(.opacity)
+
+                if toolbarVisible {
+                    HStack(spacing: isRegular ? 10 : 6) {
+                        topButton("xmark") { appState.disconnect() }
+
+                        if appState.monitors.count > 1 {
+                            ForEach(appState.monitors) { monitor in
+                                topMonitorButton(monitor)
+                            }
+                        }
+
+                        topButton("keyboard", highlight: keyboardVisible) { keyboardVisible.toggle() }
+
+                        topButton("plus.magnifyingglass") { appState.activeMonitorVC?.toggleZoom() }
+
+                        // Mission Control — shows all Mac windows for easy app switching
+                        topButton("square.on.square") { appState.webSocketClient?.sendSystemAction("mission_control") }
+
+                        Spacer()
+                    }
+                    .transition(.opacity)
+                }
             }
+            .padding(.horizontal, isRegular ? 16 : 8)
+            .padding(.top, isRegular ? 12 : 6)
         }
         // Bottom control panel — toggled
         .overlay(alignment: .bottom) {
@@ -224,7 +239,7 @@ extension Array {
     }
 }
 
-private struct LatencyBadge: View {
+struct LatencyBadge: View {
     let ms: Int
     let fps: Double
 

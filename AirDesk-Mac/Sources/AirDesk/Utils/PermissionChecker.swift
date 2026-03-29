@@ -1,36 +1,55 @@
 import AppKit
 
 enum PermissionChecker {
+    private static var requestedScreenRecordingThisLaunch = false
+    private static var requestedAccessibilityThisLaunch = false
 
-    static func requestPermissionsIfNeeded() {
-        checkScreenRecording()
-        checkAccessibility()
+    static func hasScreenRecordingPermission() -> Bool {
+        CGPreflightScreenCaptureAccess()
     }
 
-    private static func checkScreenRecording() {
-        if !CGPreflightScreenCaptureAccess() {
-            CGRequestScreenCaptureAccess()
-            showAlert(
-                title: "Screen Recording Required",
-                message: "AirDesk needs Screen Recording permission to share your display.\n\nPlease grant access in System Settings → Privacy & Security → Screen Recording, then restart AirDesk.",
-                action: "Open System Settings"
-            ) {
-                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
-            }
+    static func hasAccessibilityPermission() -> Bool {
+        AXIsProcessTrusted()
+    }
+
+    @discardableResult
+    static func ensureScreenRecordingPermissionForSharing() -> Bool {
+        if hasScreenRecordingPermission() {
+            return true
         }
+
+        if !requestedScreenRecordingThisLaunch {
+            requestedScreenRecordingThisLaunch = true
+            _ = CGRequestScreenCaptureAccess()
+            return hasScreenRecordingPermission()
+        }
+
+        showAlert(
+            title: "Screen Recording Required",
+            message: "AirDesk still can't capture your display.\n\nIf you just enabled Screen Recording in System Settings, quit and reopen AirDesk, then click Start Sharing again.",
+            action: "Open System Settings"
+        ) {
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+        }
+        return false
     }
 
-    private static func checkAccessibility() {
-        if !AXIsProcessTrusted() {
+    static func requestAccessibilityPermissionIfNeeded() {
+        guard !hasAccessibilityPermission() else { return }
+
+        if !requestedAccessibilityThisLaunch {
+            requestedAccessibilityThisLaunch = true
             let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
-            AXIsProcessTrustedWithOptions(options)
-            showAlert(
-                title: "Accessibility Required",
-                message: "AirDesk needs Accessibility permission to control your Mac remotely.\n\nPlease grant access in System Settings → Privacy & Security → Accessibility, then restart AirDesk.",
-                action: "Open System Settings"
-            ) {
-                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-            }
+            _ = AXIsProcessTrustedWithOptions(options)
+            return
+        }
+
+        showAlert(
+            title: "Accessibility Recommended",
+            message: "AirDesk can share your screen without Accessibility, but remote mouse and keyboard control need it.\n\nIf you just enabled Accessibility in System Settings, quit and reopen AirDesk to apply the change.",
+            action: "Open System Settings"
+        ) {
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
         }
     }
 

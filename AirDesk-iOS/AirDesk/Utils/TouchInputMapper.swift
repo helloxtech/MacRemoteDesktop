@@ -73,8 +73,8 @@ class TouchInputMapper {
             x: Float(n.x), y: Float(n.y),
             action: "scroll",
             displayIndex: activeDisplayIndex,
-            scrollDeltaX: Float(deltaX * 1.2),
-            scrollDeltaY: Float(deltaY * 1.2)
+            scrollDeltaX: Float(deltaX),
+            scrollDeltaY: Float(deltaY)
         ))
     }
 
@@ -108,7 +108,6 @@ class TouchInputMapper {
     }
 
     private func send(_ msg: MouseMessage) {
-        NSLog("[AirDesk] Sending \(msg.action) to display \(msg.displayIndex), client=\(client != nil)")
         client?.sendMouseMessage(msg)
     }
 }

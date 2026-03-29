@@ -17,23 +17,16 @@ class VideoDecoder {
         self.displayIndex = displayIndex
     }
 
-    func decode(_ annexBData: Data, isKeyframe: Bool) {
-        if isKeyframe {
-            extractParameterSets(from: annexBData)
-        }
-        guard formatDescription != nil || createFormatDescription() else { return }
-        guard session != nil || createSession() else { return }
+    // MARK: - Single-pass NALU structure
 
-        guard let sampleBuffer = createSampleBuffer(from: annexBData) else { return }
-
-        var flags = VTDecodeFrameFlags._EnableAsynchronousDecompression
-        var infoFlags = VTDecodeInfoFlags()
-        VTDecompressionSessionDecodeFrame(session!, sampleBuffer: sampleBuffer, flags: flags, frameRefcon: nil, infoFlagsOut: &infoFlags)
+    private struct NALUnit {
+        let type: UInt8
+        let offset: Int   // byte offset of NALU data (after start code)
+        let length: Int   // byte length of NALU data
     }
 
-    private func extractParameterSets(from data: Data) {
-        var sps: Data?
-        var pps: Data?
+    private func parseNALUnits(from data: Data) -> [NALUnit] {
+        var nalus: [NALUnit] = []
         var offset = 0
 
         while offset < data.count - 4 {
@@ -53,20 +46,55 @@ class VideoDecoder {
             }
             if end >= data.count - 3 { end = data.count }
 
-            let naluData = data[offset..<end]
-            if naluType == 7 { sps = Data(naluData) }
-            if naluType == 8 { pps = Data(naluData) }
+            nalus.append(NALUnit(type: naluType, offset: offset, length: end - offset))
             offset = end
         }
-
-        if let sps = sps, let pps = pps {
-            self.spsData = sps
-            self.ppsData = pps
-            formatDescription = nil
-            session = nil
-            createFormatDescription()
-        }
+        return nalus
     }
+
+    // MARK: - Decode (single pass)
+
+    func decode(_ annexBData: Data, isKeyframe: Bool) {
+        // Single pass: parse all NALUs, extract SPS/PPS, and build AVCC
+        let nalus = parseNALUnits(from: annexBData)
+
+        if isKeyframe {
+            var newSPS: Data?
+            var newPPS: Data?
+            for nalu in nalus {
+                if nalu.type == 7 { newSPS = Data(annexBData[nalu.offset..<(nalu.offset + nalu.length)]) }
+                if nalu.type == 8 { newPPS = Data(annexBData[nalu.offset..<(nalu.offset + nalu.length)]) }
+            }
+            if let sps = newSPS, let pps = newPPS {
+                spsData = sps
+                ppsData = pps
+                formatDescription = nil
+                if let session { VTDecompressionSessionInvalidate(session) }
+                session = nil
+                createFormatDescription()
+            }
+        }
+
+        guard formatDescription != nil || createFormatDescription() else { return }
+        guard session != nil || createSession() else { return }
+
+        // Build AVCC from video NALUs only (skip SPS=7, PPS=8)
+        var avccData = Data(capacity: annexBData.count)
+        for nalu in nalus where nalu.type != 7 && nalu.type != 8 {
+            var lengthBE = UInt32(nalu.length).bigEndian
+            avccData.append(Data(bytes: &lengthBE, count: 4))
+            avccData.append(annexBData[nalu.offset..<(nalu.offset + nalu.length)])
+        }
+        guard !avccData.isEmpty else { return }
+
+        guard let sampleBuffer = createSampleBuffer(avccData: avccData) else { return }
+
+        let flags = VTDecodeFrameFlags._EnableAsynchronousDecompression
+        var infoFlags = VTDecodeInfoFlags()
+        VTDecompressionSessionDecodeFrame(session!, sampleBuffer: sampleBuffer, flags: flags, frameRefcon: nil, infoFlagsOut: &infoFlags)
+    }
+
+    // MARK: - Session setup
 
     @discardableResult
     private func createFormatDescription() -> Bool {
@@ -103,6 +131,12 @@ class VideoDecoder {
             kCVPixelBufferIOSurfacePropertiesKey: [:]
         ]
 
+        // Prefer hardware decoder for lower latency and power usage
+        var decoderSpec: [CFString: Any] = [:]
+        if #available(iOS 17.0, *) {
+            decoderSpec[kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder] = true
+        }
+
         var outputCallback = VTDecompressionOutputCallbackRecord(
             decompressionOutputCallback: { refCon, _, status, _, imageBuffer, _, _ in
                 guard status == noErr, let imageBuffer = imageBuffer else {
@@ -120,7 +154,7 @@ class VideoDecoder {
         let status = VTDecompressionSessionCreate(
             allocator: nil,
             formatDescription: formatDescription,
-            decoderSpecification: nil,
+            decoderSpecification: decoderSpec as CFDictionary,
             imageBufferAttributes: attrs as CFDictionary,
             outputCallback: &outputCallback,
             decompressionSessionOut: &session
@@ -128,36 +162,13 @@ class VideoDecoder {
         return status == noErr
     }
 
-    private func createSampleBuffer(from annexBData: Data) -> CMSampleBuffer? {
+    private func createSampleBuffer(avccData: Data) -> CMSampleBuffer? {
         guard let formatDescription = formatDescription else { return nil }
-
-        // Convert Annex B to AVCC
-        var avccData = Data()
-        var offset = 0
-        while offset < annexBData.count - 4 {
-            guard annexBData[offset] == 0, annexBData[offset+1] == 0,
-                  annexBData[offset+2] == 0, annexBData[offset+3] == 1 else {
-                offset += 1
-                continue
-            }
-            offset += 4
-            var end = offset
-            while end < annexBData.count - 3 {
-                if annexBData[end] == 0 && annexBData[end+1] == 0 && annexBData[end+2] == 0 && annexBData[end+3] == 1 { break }
-                end += 1
-            }
-            if end >= annexBData.count - 3 { end = annexBData.count }
-            let naluLen = end - offset
-            var lengthBE = UInt32(naluLen).bigEndian
-            avccData.append(Data(bytes: &lengthBE, count: 4))
-            avccData.append(annexBData[offset..<end])
-            offset = end
-        }
 
         var blockBuffer: CMBlockBuffer?
         CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: avccData.count, blockAllocator: nil, customBlockSource: nil, offsetToData: 0, dataLength: avccData.count, flags: 0, blockBufferOut: &blockBuffer)
         guard let blockBuffer = blockBuffer else { return nil }
-        avccData.withUnsafeBytes { ptr in
+        _ = avccData.withUnsafeBytes { ptr in
             CMBlockBufferReplaceDataBytes(with: ptr.baseAddress!, blockBuffer: blockBuffer, offsetIntoDestination: 0, dataLength: avccData.count)
         }
 
@@ -172,4 +183,3 @@ class VideoDecoder {
         if let session = session { VTDecompressionSessionInvalidate(session) }
     }
 }
-

@@ -38,6 +38,7 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
     private let displayIndex: Int
     private var mtkView: MTKView!
     private var renderer: MetalVideoRendererObjC?
+    private let rendererLock = NSLock()
     private var inputMapper: TouchInputMapper?
     private var webSocketClient: WebSocketClient?
     private var scale: CGFloat = 1.0
@@ -82,6 +83,18 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        // (Re-)register with FrameRelay for direct frame delivery from decoder thread.
+        // This also recovers if viewWillDisappear cleared the handler.
+        FrameRelay.shared.set(displayIndex: displayIndex) { [weak self] pixelBuffer in
+            self?.updateFrame(pixelBuffer)
+        }
+        // Restore MTKView delegate if it was cleared
+        rendererLock.lock()
+        let r = renderer
+        rendererLock.unlock()
+        if mtkView.delegate == nil, let r {
+            mtkView.delegate = r
+        }
         webSocketClient?.requestStream(displayIndex: displayIndex)
         startRefreshTimer()
     }
@@ -90,10 +103,11 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         super.viewWillDisappear(animated)
         refreshTimer?.invalidate()
         refreshTimer = nil
-        // Stop Metal rendering immediately to prevent GPU faults from in-flight
-        // command buffers referencing a drawable that's being torn down.
+        // Remove frame handler so decoder stops delivering to this VC
+        FrameRelay.shared.set(displayIndex: displayIndex, handler: nil)
+        // Stop Metal draws but keep renderer alive for potential viewDidAppear re-use.
+        // ARC will clean up the renderer when the VC is deallocated.
         mtkView.delegate = nil
-        renderer = nil
     }
 
     /// Periodically requests a fresh stream if no frames arrived recently.
@@ -140,7 +154,9 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
             mtkBottomConstraint,
         ])
 
+        rendererLock.lock()
         renderer = MetalVideoRendererObjC(device: device, mtkView: mtkView)
+        rendererLock.unlock()
     }
 
     private func setupGestures() {
@@ -218,10 +234,23 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         }
     }
 
+    /// Thread-safe: can be called from any thread (decoder callback, main thread).
+    /// Takes a lock-protected local ref to renderer to avoid racing with
+    /// viewWillDisappear, then schedules a lightweight setNeedsDisplay on main.
     func updateFrame(_ pixelBuffer: CVPixelBuffer) {
-        lastFrameTime = CFAbsoluteTimeGetCurrent()
-        renderer?.updateFrame(pixelBuffer)
-        mtkView.setNeedsDisplay()
+        rendererLock.lock()
+        let r = renderer
+        rendererLock.unlock()
+        r?.updateFrame(pixelBuffer)
+        if Thread.isMainThread {
+            lastFrameTime = CFAbsoluteTimeGetCurrent()
+            mtkView?.setNeedsDisplay()
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.lastFrameTime = CFAbsoluteTimeGetCurrent()
+                self?.mtkView?.setNeedsDisplay()
+            }
+        }
     }
 
     /// Toggle between 1x (fit) and 2x (readable text) zoom.
@@ -273,6 +302,9 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
     @objc private func handleTap(_ gr: UITapGestureRecognizer) {
         ensureMapper()
         let point = gr.location(in: view)
+        NSLog("[AirDesk] tap at (%.0f, %.0f) inContent=%d mapper=%d client=%d",
+              point.x, point.y, isInContent(point) ? 1 : 0,
+              inputMapper != nil ? 1 : 0, webSocketClient != nil ? 1 : 0)
         guard isInContent(point) else { return }
         let p = touchPointInMTKView(point)
         inputMapper?.handleTap(at: p, in: mtkViewSize)
@@ -383,7 +415,7 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
             probePendingPan += deltaY
 
             let elapsed = CFAbsoluteTimeGetCurrent() - probeStartTime
-            if elapsed > 0.15 {
+            if elapsed > 0.10 {
                 // Probe period over — did the screen change?
                 if lastFrameTime > probeStartFrameTime {
                     // New frame arrived → page IS scrollable
@@ -495,6 +527,11 @@ class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
     private var currentPixelBuffer: CVPixelBuffer?
     private let lock = NSLock()
 
+    // Limit in-flight GPU frames to prevent drawable exhaustion (which blocks main thread).
+    // MTKView has 3 drawables; capping at 2 in-flight guarantees one is always free.
+    private var inflightCount = 0
+    private let maxInflight = 2
+
     // Cached aspect-fit vertices — recomputed only when dimensions change
     private var cachedVerts: [SIMD4<Float>]?
     private var lastImgW = 0, lastImgH = 0
@@ -548,12 +585,23 @@ class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
+        // Skip if GPU already has maxInflight frames queued — prevents
+        // view.currentDrawable from blocking the main thread (which causes freeze).
+        guard inflightCount < maxInflight else { return }
+
         lock.lock(); let pb = currentPixelBuffer; lock.unlock()
         guard let pb,
               let textureCache = textureCache,
-              let pipelineState = pipelineState,
-              let drawable = view.currentDrawable,
-              let cb = commandQueue.makeCommandBuffer() else { return }
+              let pipelineState = pipelineState else { return }
+
+        // Increment BEFORE requesting drawable (drawable can block if pool is full)
+        inflightCount += 1
+
+        guard let drawable = view.currentDrawable,
+              let cb = commandQueue.makeCommandBuffer() else {
+            inflightCount -= 1
+            return
+        }
 
         let w = CVPixelBufferGetWidth(pb)
         let h = CVPixelBufferGetHeight(pb)
@@ -561,7 +609,10 @@ class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
         let status = CVMetalTextureCacheCreateTextureFromImage(
             nil, textureCache, pb, nil, .bgra8Unorm, w, h, 0, &cvTex)
         guard status == kCVReturnSuccess, let cvTex = cvTex,
-              let texture = CVMetalTextureGetTexture(cvTex) else { return }
+              let texture = CVMetalTextureGetTexture(cvTex) else {
+            inflightCount -= 1
+            return
+        }
 
         // Recompute aspect-fit vertices only when dimensions change
         let dw = Float(view.drawableSize.width), dh = Float(view.drawableSize.height)
@@ -577,7 +628,10 @@ class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
                 SIMD4(sx, -sy, 1, 1), SIMD4(sx, sy, 1, 0), SIMD4(-sx, sy, 0, 0),
             ]
         }
-        guard let verts = cachedVerts else { return }
+        guard let verts = cachedVerts else {
+            inflightCount -= 1
+            return
+        }
 
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = drawable.texture
@@ -585,7 +639,10 @@ class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         pass.colorAttachments[0].storeAction = .store
 
-        guard let enc = cb.makeRenderCommandEncoder(descriptor: pass) else { return }
+        guard let enc = cb.makeRenderCommandEncoder(descriptor: pass) else {
+            inflightCount -= 1
+            return
+        }
         enc.setRenderPipelineState(pipelineState)
         enc.setVertexBytes(verts, length: MemoryLayout<SIMD4<Float>>.stride * 6, index: 0)
         enc.setFragmentTexture(texture, index: 0)
@@ -594,7 +651,11 @@ class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
 
         // Retain CVMetalTexture until the GPU finishes — the MTLTexture is just
         // a view into the IOSurface and becomes invalid once cvTex is released.
-        cb.addCompletedHandler { _ in _ = cvTex }
+        // Also decrement inflightCount on main thread so draw() can accept new work.
+        cb.addCompletedHandler { [weak self] _ in
+            _ = cvTex
+            DispatchQueue.main.async { self?.inflightCount -= 1 }
+        }
         cb.present(drawable)
         cb.commit()
     }

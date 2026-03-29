@@ -18,6 +18,7 @@ class WebSocketClient: NSObject {
     var onDisconnect: ((Error?) -> Void)?
     var onClipboardChanged: ((String) -> Void)?
     var onLatencyUpdate: ((Int) -> Void)?
+    var onLockStatusChanged: ((Bool, String) -> Void)?
 
     init(host: String, port: Int) {
         self.host = host
@@ -113,11 +114,14 @@ class WebSocketClient: NSObject {
             connectTimeoutWork = nil
             if let msg = try? JSONDecoder().decode(ScreenInfoMessage.self, from: data) {
                 onMonitorsReceived?(msg.monitors)
-                if !msg.monitors.isEmpty { requestStream(displayIndex: 0) }
             }
         case "clipboard_changed":
             if let msg = try? JSONDecoder().decode(ClipboardMessage.self, from: data) {
                 onClipboardChanged?(msg.content)
+            }
+        case "lock_status":
+            if let msg = try? JSONDecoder().decode(LockStatusMessage.self, from: data) {
+                onLockStatusChanged?(msg.isLocked, msg.message)
             }
         default:
             break

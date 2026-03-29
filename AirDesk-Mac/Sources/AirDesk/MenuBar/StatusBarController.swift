@@ -77,6 +77,11 @@ class StatusBarController: NSObject {
         isSharing ? stopSharing() : startSharing()
     }
 
+    func startSharingAutomatically() {
+        guard !isSharing else { return }
+        startSharing()
+    }
+
     @objc private func toggleTunnel() {
         // Tunnel only makes sense when sharing is active
         if !isSharing { startSharing() }
@@ -84,11 +89,17 @@ class StatusBarController: NSObject {
     }
 
     private func startSharing() {
+        guard PermissionChecker.ensureScreenRecordingPermissionForSharing() else {
+            print("startSharing blocked: missing Screen Recording permission")
+            return
+        }
+
         print("startSharing called")
         server.start()
         capture.startCapture()
         bonjour.start()
         clipboard.start()
+        PermissionChecker.requestAccessibilityPermissionIfNeeded()
         isSharing = true
         toggleItem.title = "Stop Sharing"
         updateIcon()

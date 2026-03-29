@@ -1,6 +1,7 @@
 import ScreenCaptureKit
 import CoreGraphics
 import Foundation
+import AppKit
 
 protocol ScreenCaptureDelegate: AnyObject {
     func didCaptureFrame(_ frame: CVPixelBuffer, displayIndex: Int)
@@ -9,12 +10,45 @@ protocol ScreenCaptureDelegate: AnyObject {
 class ScreenCaptureManager: NSObject {
 
     weak var delegate: ScreenCaptureDelegate?
+    var monitorConfigurationDidChange: (([MonitorInfo]) -> Void)?
     private var streams: [SCStream] = []
     private var streamIndexMap: [ObjectIdentifier: Int] = [:]
     private(set) var monitorInfos: [MonitorInfo] = []
     private var isCapturing = false
     private let captureQueue = DispatchQueue(label: "airdesk.capture.manager")
     private var frameLogCounter = 0
+    private var screenParametersObserver: Any?
+    private var lockStatusObserver: Any?
+    private var pendingRestartWorkItem: DispatchWorkItem?
+
+    override init() {
+        super.init()
+        screenParametersObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.scheduleCaptureRestart(reason: "display configuration changed")
+        }
+        lockStatusObserver = NotificationCenter.default.addObserver(
+            forName: .screenLockStatusChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let isLocked = notification.object as? Bool, !isLocked else { return }
+            self?.scheduleCaptureRestart(reason: "screen unlocked")
+        }
+    }
+
+    deinit {
+        pendingRestartWorkItem?.cancel()
+        if let observer = screenParametersObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = lockStatusObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
 
     func startCapture() {
         captureQueue.async { [weak self] in
@@ -28,10 +62,13 @@ class ScreenCaptureManager: NSObject {
         captureQueue.async { [weak self] in
             guard let self, self.isCapturing else { return }
             self.isCapturing = false
+            self.pendingRestartWorkItem?.cancel()
+            self.pendingRestartWorkItem = nil
             let streamsToStop = self.streams
             self.streams.removeAll()
             self.streamIndexMap.removeAll()
             self.monitorInfos.removeAll()
+            self.frameLogCounter = 0
             Task {
                 for stream in streamsToStop {
                     try? await stream.stopCapture()
@@ -40,23 +77,28 @@ class ScreenCaptureManager: NSObject {
         }
     }
 
+    func currentMonitorInfos() -> [MonitorInfo] {
+        captureQueue.sync { monitorInfos }
+    }
+
     private func beginCapture() async {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            let screens = NSScreen.screens
-
-            // Sort displays by displayID so index ordering is deterministic and matches
-            // CGGetActiveDisplayList (which also returns displays sorted by ID).
-            let sortedDisplays = content.displays.sorted { $0.displayID < $1.displayID }
-            print("[AirDesk] Found \(sortedDisplays.count) displays, \(screens.count) NSScreens")
+            let activeDisplayIDs = Self.activeDisplayIDs()
+            let scaleByDisplayID = Self.scaleFactorsByDisplayID()
+            let displaysByID = Dictionary(uniqueKeysWithValues: content.displays.map { ($0.displayID, $0) })
+            // Use the active CG display list as the source of truth so capture,
+            // input injection, and immediate refresh captures all agree on index order.
+            let sortedDisplays = activeDisplayIDs.isEmpty
+                ? content.displays.sorted { $0.displayID < $1.displayID }
+                : activeDisplayIDs.compactMap { displaysByID[$0] }
+            print("[AirDesk] Found \(sortedDisplays.count) active displays, \(NSScreen.screens.count) NSScreens")
 
             let infos: [MonitorInfo] = sortedDisplays.enumerated().map { index, display in
-                let scale = screens.first(where: { Int($0.frame.width * $0.backingScaleFactor) == display.width })?.backingScaleFactor ?? 1.0
+                let scale = scaleByDisplayID[display.displayID] ?? 1.0
                 print("[AirDesk] Display \(index): \(display.width)x\(display.height) scale=\(scale) id=\(display.displayID)")
                 return MonitorInfo(id: index, width: display.width, height: display.height, scaleFactor: Float(scale), name: "Display \(index + 1)")
             }
-
-            captureQueue.async { self.monitorInfos = infos }
 
             for (index, display) in sortedDisplays.enumerated() {
                 let filter = SCContentFilter(display: display, excludingWindows: [])
@@ -80,10 +122,62 @@ class ScreenCaptureManager: NSObject {
                 try await stream.startCapture()
                 print("[AirDesk] Started capture for display \(index)")
             }
+
+            captureQueue.async {
+                self.monitorInfos = infos
+                self.monitorConfigurationDidChange?(infos)
+            }
         } catch {
             captureQueue.async { self.isCapturing = false }
             print("[AirDesk] ScreenCaptureManager error: \(error)")
         }
+    }
+
+    private func scheduleCaptureRestart(reason: String) {
+        captureQueue.async { [weak self] in
+            guard let self, self.isCapturing else { return }
+            self.pendingRestartWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self, self.isCapturing else { return }
+                Task { await self.restartCapture(reason: reason) }
+            }
+            self.pendingRestartWorkItem = workItem
+            self.captureQueue.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+        }
+    }
+
+    private func restartCapture(reason: String) async {
+        print("[AirDesk] Restarting capture: \(reason)")
+        let streamsToStop = captureQueue.sync { () -> [SCStream] in
+            let currentStreams = streams
+            streams.removeAll()
+            streamIndexMap.removeAll()
+            monitorInfos.removeAll()
+            frameLogCounter = 0
+            return currentStreams
+        }
+        for stream in streamsToStop {
+            try? await stream.stopCapture()
+        }
+        await beginCapture()
+    }
+
+    private static func activeDisplayIDs() -> [CGDirectDisplayID] {
+        var count: UInt32 = 0
+        CGGetActiveDisplayList(0, nil, &count)
+        guard count > 0 else { return [] }
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        CGGetActiveDisplayList(count, &displays, &count)
+        return Array(displays.prefix(Int(count))).sorted()
+    }
+
+    private static func scaleFactorsByDisplayID() -> [CGDirectDisplayID: CGFloat] {
+        var result: [CGDirectDisplayID: CGFloat] = [:]
+        for screen in NSScreen.screens {
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { continue }
+            result[CGDirectDisplayID(number.uint32Value)] = screen.backingScaleFactor
+        }
+        return result
     }
 }
 

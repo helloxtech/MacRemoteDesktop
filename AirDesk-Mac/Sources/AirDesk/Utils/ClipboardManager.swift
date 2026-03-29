@@ -5,11 +5,13 @@ class ClipboardManager {
     weak var server: WebSocketServer?
     private var timer: DispatchSourceTimer?
     private var lastContent: String = ""
+    private var lastChangeCount: Int = 0
     private let queue = DispatchQueue(label: "airdesk.clipboard")
 
     func start() {
         // Seed with current clipboard content so we don't broadcast stale content on start
         lastContent = NSPasteboard.general.string(forType: .string) ?? ""
+        lastChangeCount = NSPasteboard.general.changeCount
 
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(deadline: .now() + 0.5, repeating: 0.5)
@@ -34,6 +36,9 @@ class ClipboardManager {
     }
 
     private func checkClipboard() {
+        let currentCount = NSPasteboard.general.changeCount
+        guard currentCount != lastChangeCount else { return }
+        lastChangeCount = currentCount
         guard let content = NSPasteboard.general.string(forType: .string),
               content != lastContent else { return }
         lastContent = content

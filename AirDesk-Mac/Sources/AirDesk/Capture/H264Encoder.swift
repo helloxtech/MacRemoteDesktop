@@ -12,6 +12,7 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
 
     weak var delegate: H264EncoderDelegate?
     private var sessions: [Int: VTCompressionSession] = [:]
+    private var sessionSizes: [Int: CGSize] = [:]
     private let encoderQueue = DispatchQueue(label: "airdesk.encoder")
     private var frameCounters: [Int: Int] = [:]
     private var pendingKeyframe: Set<Int> = []
@@ -27,6 +28,19 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
     func didCaptureFrame(_ frame: CVPixelBuffer, displayIndex: Int) {
         encoderQueue.async { [weak self] in
             self?.encodeFrame(frame, displayIndex: displayIndex)
+        }
+    }
+
+    func resetAllSessions() {
+        encoderQueue.async { [weak self] in
+            guard let self else { return }
+            for session in self.sessions.values {
+                VTCompressionSessionInvalidate(session)
+            }
+            self.sessions.removeAll()
+            self.sessionSizes.removeAll()
+            self.frameCounters.removeAll()
+            self.pendingKeyframe.removeAll()
         }
     }
 
@@ -67,6 +81,7 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
     }
 
     private func encodeFrame(_ pixelBuffer: CVPixelBuffer, displayIndex: Int) {
+        ensureSessionMatches(pixelBuffer: pixelBuffer, displayIndex: displayIndex)
         if sessions[displayIndex] == nil {
             createSession(for: pixelBuffer, displayIndex: displayIndex)
         }
@@ -127,6 +142,26 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
         VTCompressionSessionPrepareToEncodeFrames(session)
 
         sessions[displayIndex] = session
+        sessionSizes[displayIndex] = CGSize(width: CGFloat(width), height: CGFloat(height))
+    }
+
+    private func ensureSessionMatches(pixelBuffer: CVPixelBuffer, displayIndex: Int) {
+        let size = CGSize(
+            width: CGFloat(CVPixelBufferGetWidth(pixelBuffer)),
+            height: CGFloat(CVPixelBufferGetHeight(pixelBuffer))
+        )
+        if let currentSize = sessionSizes[displayIndex], currentSize != size {
+            invalidateSession(for: displayIndex)
+        }
+    }
+
+    private func invalidateSession(for displayIndex: Int) {
+        if let session = sessions.removeValue(forKey: displayIndex) {
+            VTCompressionSessionInvalidate(session)
+        }
+        sessionSizes.removeValue(forKey: displayIndex)
+        frameCounters.removeValue(forKey: displayIndex)
+        pendingKeyframe.remove(displayIndex)
     }
 
     private var encodeLogCounter = 0
@@ -156,21 +191,25 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
             }
         }
 
-        // Convert AVCC to Annex B
+        // Convert AVCC to Annex B — zero-copy via CMBlockBuffer pointer
         let totalLength = CMBlockBufferGetDataLength(dataBuffer)
-        var rawData = Data(count: totalLength)
-        rawData.withUnsafeMutableBytes { ptr in
-            _ = CMBlockBufferCopyDataBytes(dataBuffer, atOffset: 0, dataLength: totalLength, destination: ptr.baseAddress!)
-        }
+        annexBData.reserveCapacity(annexBData.count + totalLength + 16)
+
+        var dataPointer: UnsafeMutablePointer<Int8>?
+        var lengthAtOffset = 0
+        var totalLengthOut = 0
+        guard CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0, lengthAtOffsetOut: &lengthAtOffset,
+                                          totalLengthOut: &totalLengthOut, dataPointerOut: &dataPointer) == noErr,
+              let rawPtr = dataPointer else { return }
 
         var offset = 0
-        while offset < rawData.count - 4 {
-            let naluLength = rawData.withUnsafeBytes { bytes -> Int in
-                let ptr = bytes.baseAddress!.advanced(by: offset).assumingMemoryBound(to: UInt8.self)
-                return Int(ptr[0]) << 24 | Int(ptr[1]) << 16 | Int(ptr[2]) << 8 | Int(ptr[3])
-            }
+        while offset < totalLengthOut - 4 {
+            let p = rawPtr.advanced(by: offset)
+            let naluLength = Int(UInt8(bitPattern: p[0])) << 24 | Int(UInt8(bitPattern: p[1])) << 16 |
+                             Int(UInt8(bitPattern: p[2])) << 8  | Int(UInt8(bitPattern: p[3]))
             annexBData.append(contentsOf: [0, 0, 0, 1])
-            annexBData.append(rawData[(offset + 4)..<(offset + 4 + naluLength)])
+            annexBData.append(UnsafeBufferPointer(start: UnsafeRawPointer(p.advanced(by: 4)).assumingMemoryBound(to: UInt8.self),
+                                                  count: naluLength))
             offset += 4 + naluLength
         }
 

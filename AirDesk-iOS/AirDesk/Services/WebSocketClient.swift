@@ -36,7 +36,11 @@ class WebSocketClient: NSObject {
 
         let config = URLSessionConfiguration.default
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
-        guard let url = URL(string: "ws://\(host):\(port)") else { return }
+        guard let url = websocketURL() else {
+            NSLog("[AirDesk] Invalid WebSocket URL for host=%@ port=%d", host, port)
+            handleDisconnect(URLError(.badURL))
+            return
+        }
         task = session?.webSocketTask(with: url)
         task?.resume()
         startReceiving()
@@ -69,6 +73,12 @@ class WebSocketClient: NSObject {
     func sendSystemAction(_ action: String) { sendJSON(SystemActionMessage(action: action)) }
 
     private func sendConnectMessage() { sendJSON(ConnectMessage()) }
+
+    private func websocketURL() -> URL? {
+        let needsIPv6Brackets = host.contains(":") && !host.hasPrefix("[") && !host.hasSuffix("]")
+        let formattedHost = needsIPv6Brackets ? "[\(host)]" : host
+        return URL(string: "ws://\(formattedHost):\(port)")
+    }
 
     private func sendJSON<T: Encodable>(_ value: T) {
         guard let data = try? JSONEncoder().encode(value),

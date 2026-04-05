@@ -77,11 +77,6 @@ class AppState: ObservableObject {
         d.hostsUpdated = { [weak self] hosts in
             Task { @MainActor in
                 self?.discoveredHosts = hosts
-                // DEBUG: Auto-connect to first discovered host
-                if let first = hosts.first, self?.connectionState == .disconnected {
-                    NSLog("[AirDesk] DEBUG: Auto-connecting to \(first.name)")
-                    self?.connect(to: first)
-                }
             }
         }
         d.start()

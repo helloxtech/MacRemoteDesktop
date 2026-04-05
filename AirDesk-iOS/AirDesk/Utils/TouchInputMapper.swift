@@ -5,6 +5,8 @@ class TouchInputMapper {
     private var client: WebSocketClient?
     private var activeDisplayIndex: Int = 0
     private var monitor: MonitorInfo?
+    private var viewport: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+    private var displayRect: CGRect = .zero
     private var isDragging = false
 
     init(client: WebSocketClient) {
@@ -18,6 +20,14 @@ class TouchInputMapper {
     func configure(displayIndex: Int, monitor: MonitorInfo) {
         self.activeDisplayIndex = displayIndex
         self.monitor = monitor
+    }
+
+    func setViewport(_ viewport: CGRect) {
+        self.viewport = viewport
+    }
+
+    func setDisplayRect(_ rect: CGRect) {
+        self.displayRect = rect
     }
 
     func handleMove(at point: CGPoint, in viewSize: CGSize) {
@@ -80,30 +90,21 @@ class TouchInputMapper {
 
     /// The rect within the view where the Mac screen is actually rendered.
     private func contentRect(viewSize: CGSize) -> CGRect {
-        guard let monitor else { return CGRect(origin: .zero, size: viewSize) }
-        let monitorAspect = CGFloat(monitor.width) / CGFloat(monitor.height)
-        let viewAspect = viewSize.width / viewSize.height
-
-        if viewAspect > monitorAspect {
-            let contentHeight = viewSize.height
-            let contentWidth = contentHeight * monitorAspect
-            let offsetX = (viewSize.width - contentWidth) / 2
-            return CGRect(x: offsetX, y: 0, width: contentWidth, height: contentHeight)
-        } else {
-            let contentWidth = viewSize.width
-            let contentHeight = contentWidth / monitorAspect
-            let offsetY = (viewSize.height - contentHeight) / 2
-            return CGRect(x: 0, y: offsetY, width: contentWidth, height: contentHeight)
+        if displayRect.width > 0, displayRect.height > 0 {
+            return displayRect
         }
+        return CGRect(origin: .zero, size: viewSize)
     }
 
     /// Maps a touch in the view to normalized Mac coordinates (0–1),
     /// correctly accounting for letterbox/pillarbox based on monitor aspect ratio.
     private func normalizePoint(_ point: CGPoint, viewSize: CGSize) -> CGPoint {
         let rect = contentRect(viewSize: viewSize)
+        let localX = max(0, min(1, (point.x - rect.origin.x) / rect.width))
+        let localY = max(0, min(1, (point.y - rect.origin.y) / rect.height))
         return CGPoint(
-            x: max(0, min(1, (point.x - rect.origin.x) / rect.width)),
-            y: max(0, min(1, (point.y - rect.origin.y) / rect.height))
+            x: max(0, min(1, viewport.origin.x + localX * viewport.width)),
+            y: max(0, min(1, viewport.origin.y + localY * viewport.height))
         )
     }
 

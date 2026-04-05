@@ -4,6 +4,7 @@ import SwiftUI
 struct AirDeskApp: App {
 
     @StateObject private var appState = AppState()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -11,6 +12,11 @@ struct AirDeskApp: App {
                 .environmentObject(appState)
                 .onAppear {
                     appState.startDiscovery()
+                }
+                .onChange(of: scenePhase) { newPhase in
+                    if newPhase == .active && appState.connectionState == .disconnected {
+                        appState.startDiscovery()
+                    }
                 }
                 .onOpenURL { url in
                     // airdesk://connect?host=x.x.x.x&port=7890

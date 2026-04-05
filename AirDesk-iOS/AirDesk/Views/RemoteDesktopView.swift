@@ -1,16 +1,61 @@
 import SwiftUI
+import UIKit
 
 struct RemoteDesktopView: View {
     @EnvironmentObject var appState: AppState
     @State private var keyboardVisible = false
-    @State private var toolbarVisible = false
+    @State private var keyboardInset: CGFloat = 0
+    @State private var toolbarVisible = true
     @State private var activeModifiers: Set<String> = []
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var isRegular: Bool { sizeClass == .regular }
+    private var effectiveTopInset: CGFloat {
+        let windowInset = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)?
+            .safeAreaInsets.top ?? 0
+        return max(windowInset, 44)
+    }
+    private var effectiveBottomInset: CGFloat {
+        let windowInset = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)?
+            .safeAreaInsets.bottom ?? 0
+        return max(windowInset, 8)
+    }
 
     private func toggleToolbar() {
-        withAnimation(.easeInOut(duration: 0.25)) { toolbarVisible.toggle() }
+        withAnimation(.easeInOut(duration: 0.2)) { toolbarVisible.toggle() }
+    }
+
+    private func updateKeyboardInset(from note: Notification) {
+        guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)
+        let safeBottom = window?.safeAreaInsets.bottom ?? 0
+        let windowHeight = window?.bounds.height ?? UIScreen.main.bounds.height
+        let overlap = max(0, windowHeight - frame.minY - safeBottom)
+        withAnimation(.easeOut(duration: 0.2)) {
+            keyboardInset = overlap
+        }
+    }
+
+    private func resetKeyboardInset() {
+        withAnimation(.easeOut(duration: 0.2)) {
+            keyboardInset = 0
+        }
+    }
+
+    private func closeRemote() {
+        keyboardVisible = false
+        toolbarVisible = true
+        activeModifiers.removeAll()
+        appState.disconnect()
     }
 
     private func sendKey(_ keyCode: Int) {
@@ -33,158 +78,190 @@ struct RemoteDesktopView: View {
     }
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
+        GeometryReader { _ in
+            ZStack {
+                Color.black
 
-            // Active monitor — direct embedding avoids UIPageViewController's
-            // internal UIScrollView which steals pan/tap gestures from our VC.
-            if let monitor = appState.monitors.first(where: { $0.id == appState.activeMonitorIndex })
-                ?? appState.monitors.first {
-                MonitorView(monitor: monitor, displayIndex: monitor.id)
-                    .id(monitor.id)
-                    .ignoresSafeArea()
-            }
-        }
-        // Toggle pill + latency badge — always visible, top-right
-        .overlay(alignment: .topTrailing) {
-            HStack(spacing: isRegular ? 8 : 5) {
-                LatencyBadge(ms: appState.latencyMs, fps: appState.decodedFPS)
-                Button(action: toggleToolbar) {
-                    Image(systemName: toolbarVisible ? "chevron.down" : "ellipsis")
-                        .font(.system(size: isRegular ? 15 : 11, weight: .bold))
-                        .foregroundColor(.white)
-                        .frame(width: isRegular ? 48 : 36, height: isRegular ? 36 : 28)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(isRegular ? 18 : 14)
+                if let monitor = appState.monitors.first(where: { $0.id == appState.activeMonitorIndex })
+                    ?? appState.monitors.first {
+                    MonitorView(monitor: monitor, displayIndex: monitor.id)
+                        .id(monitor.id)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color.black)
                 }
             }
-            .padding(.trailing, isRegular ? 16 : 8)
-            .padding(.top, isRegular ? 12 : 6)
-        }
-        // Top bar — toggled
-        .overlay(alignment: .top) {
-            VStack(spacing: isRegular ? 8 : 6) {
-                if appState.isHostLocked {
-                    Text(appState.hostStatusMessage ?? "Mac is locked")
-                        .font(.system(size: isRegular ? 13 : 11, weight: .medium))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, isRegular ? 14 : 10)
-                        .padding(.vertical, isRegular ? 8 : 6)
-                        .background(Color.black.opacity(0.72))
-                        .clipShape(Capsule())
+            .ignoresSafeArea()
+            .overlay(alignment: .top) {
+                Group {
+                    if toolbarVisible {
+                        topChrome
+                    } else {
+                        toolbarRevealButton
+                    }
                 }
-
+                .ignoresSafeArea(edges: .top)
+                .padding(.top, effectiveTopInset + (isRegular ? 6 : 10))
+            }
+            .overlay(alignment: .bottom) {
                 if toolbarVisible {
-                    HStack(spacing: isRegular ? 10 : 6) {
-                        topButton("xmark") { appState.disconnect() }
+                    bottomToolbar
+                        .ignoresSafeArea(edges: .bottom)
+                        .padding(.bottom, effectiveBottomInset + keyboardInset + (isRegular ? 2 : 8))
+                }
+            }
+            .overlay(
+                KeyboardInputView(isActive: $keyboardVisible, activeModifiers: $activeModifiers, client: appState.webSocketClient)
+                    .frame(width: 1, height: 1)
+                    .opacity(0.01)
+            )
+            .statusBar(hidden: true)
+            .hidePersistentSystemOverlays()
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+                updateKeyboardInset(from: note)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                resetKeyboardInset()
+            }
+        }
+        .ignoresSafeArea()
+    }
 
-                        if appState.monitors.count > 1 {
+    private var topChrome: some View {
+        VStack(spacing: isRegular ? 8 : 6) {
+            HStack(spacing: isRegular ? 10 : 6) {
+                topButton("xmark", action: closeRemote)
+
+                if appState.monitors.count > 1 {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: isRegular ? 8 : 5) {
                             ForEach(appState.monitors) { monitor in
                                 topMonitorButton(monitor)
                             }
                         }
-
-                        topButton("keyboard", highlight: keyboardVisible) { keyboardVisible.toggle() }
-
-                        topButton("plus.magnifyingglass") { appState.activeMonitorVC?.toggleZoom() }
-
-                        // Mission Control — shows all Mac windows for easy app switching
-                        topButton("square.on.square") { appState.webSocketClient?.sendSystemAction("mission_control") }
-
-                        Spacer()
                     }
-                    .transition(.opacity)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Spacer(minLength: 0)
                 }
+
+                LatencyBadge(ms: appState.latencyMs, fps: appState.decodedFPS)
+
+                topButton(toolbarVisible ? "chevron.down" : "ellipsis", action: toggleToolbar)
             }
-            .padding(.horizontal, isRegular ? 16 : 8)
-            .padding(.top, isRegular ? 12 : 6)
-        }
-        // Bottom control panel — toggled
-        .overlay(alignment: .bottom) {
-            if toolbarVisible {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: isRegular ? 8 : 5) {
-                        iconButton("arrow.left") { sendKey(123) }
-                        iconButton("arrow.down") { sendKey(125) }
-                        iconButton("arrow.up") { sendKey(126) }
-                        iconButton("arrow.right") { sendKey(124) }
 
-                        separator
-
-                        labelButton("↵") { sendKey(36) }
-                        labelButton("Esc") { sendKey(53) }
-                        labelButton("Tab") { sendKey(48) }
-
-                        separator
-
-                        modifierKey("⌘", mod: "cmd")
-                        modifierKey("⌃", mod: "ctrl")
-                        modifierKey("⌥", mod: "opt")
-                        modifierKey("⇧", mod: "shift")
-
-                        separator
-
-                        iconButton("doc.on.clipboard") { appState.pushClipboardToMac() }
-                    }
-                    .padding(.horizontal, isRegular ? 16 : 10)
-                    .padding(.vertical, isRegular ? 12 : 8)
-                }
-                .background(.ultraThinMaterial)
-                .cornerRadius(isRegular ? 18 : 14)
-                .padding(.horizontal, isRegular ? 12 : 6)
-                .padding(.bottom, isRegular ? 12 : 6)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+            if appState.isHostLocked {
+                Text(appState.hostStatusMessage ?? "Mac is locked")
+                    .font(.system(size: isRegular ? 13 : 11, weight: .medium))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, isRegular ? 8 : 6)
+                    .padding(.vertical, 6)
+                    .background(Color.black.opacity(0.72))
+                    .clipShape(Capsule())
+                    .padding(.horizontal, isRegular ? 8 : 6)
             }
         }
-        .overlay(
-            KeyboardInputView(isActive: $keyboardVisible, activeModifiers: $activeModifiers, client: appState.webSocketClient)
-                .frame(width: 1, height: 1)
-                .opacity(0.01)
-        )
-        .statusBar(hidden: true)
-        .hidePersistentSystemOverlays()
+        .frame(maxWidth: .infinity, alignment: .top)
+        .padding(.horizontal, isRegular ? 8 : 6)
+        .padding(.bottom, isRegular ? 4 : 2)
     }
 
-    // MARK: - Top Bar Buttons
+    private var toolbarRevealButton: some View {
+        HStack {
+            Spacer()
+            Button(action: toggleToolbar) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.down.circle.fill")
+                        .font(.system(size: isRegular ? 18 : 16, weight: .semibold))
+                    Text("Tools")
+                        .font(.system(size: isRegular ? 14 : 12, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, isRegular ? 12 : 10)
+                .frame(height: isRegular ? 36 : 32)
+                .background(Color.black.opacity(0.82))
+                .overlay(
+                    Capsule().stroke(Color.white.opacity(0.22), lineWidth: 1)
+                )
+                .clipShape(Capsule())
+            }
+        }
+        .padding(.horizontal, isRegular ? 8 : 6)
+    }
+
+    private var bottomToolbar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: isRegular ? 8 : 5) {
+                iconButton("keyboard", highlight: keyboardVisible) { keyboardVisible.toggle() }
+                iconButton("plus.magnifyingglass") { appState.activeMonitorVC?.toggleZoom() }
+                iconButton("square.on.square") { appState.webSocketClient?.sendSystemAction("mission_control") }
+
+                separator
+
+                iconButton("arrow.left") { sendKey(123) }
+                iconButton("arrow.down") { sendKey(125) }
+                iconButton("arrow.up") { sendKey(126) }
+                iconButton("arrow.right") { sendKey(124) }
+
+                separator
+
+                labelButton("↵") { sendKey(36) }
+                labelButton("Esc") { sendKey(53) }
+                labelButton("Tab") { sendKey(48) }
+
+                separator
+
+                modifierKey("⌘", mod: "cmd")
+                modifierKey("⌃", mod: "ctrl")
+                modifierKey("⌥", mod: "opt")
+                modifierKey("⇧", mod: "shift")
+
+                separator
+
+                iconButton("doc.on.clipboard") { appState.pushClipboardToMac() }
+            }
+            .padding(.horizontal, isRegular ? 12 : 8)
+            .padding(.vertical, isRegular ? 8 : 6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, 0)
+    }
 
     private func topButton(_ icon: String, highlight: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: isRegular ? 16 : 12, weight: .semibold))
+                .font(.system(size: isRegular ? 15 : 12, weight: .semibold))
                 .foregroundColor(highlight ? .yellow : .white)
-                .frame(width: isRegular ? 44 : 32, height: isRegular ? 36 : 28)
-                .background(.ultraThinMaterial)
-                .cornerRadius(isRegular ? 18 : 14)
+                .frame(width: isRegular ? 40 : 32, height: isRegular ? 34 : 28)
+                .background(Color.white.opacity(0.10))
+                .cornerRadius(isRegular ? 17 : 14)
         }
     }
 
     private func topMonitorButton(_ monitor: MonitorInfo) -> some View {
         let selected = appState.activeMonitorIndex == monitor.id
         return Button { appState.selectMonitor(monitor.id) } label: {
-            HStack(spacing: isRegular ? 5 : 3) {
+            HStack(spacing: isRegular ? 4 : 3) {
                 Image(systemName: "display")
-                    .font(.system(size: isRegular ? 12 : 9))
+                    .font(.system(size: isRegular ? 11 : 9))
                 Text("\(monitor.id + 1)")
-                    .font(.system(size: isRegular ? 14 : 11, weight: .semibold))
+                    .font(.system(size: isRegular ? 13 : 11, weight: .semibold))
             }
             .foregroundColor(selected ? .black : .white)
             .padding(.horizontal, isRegular ? 10 : 7)
-            .frame(height: isRegular ? 36 : 28)
-            .background(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.ultraThinMaterial))
-            .cornerRadius(isRegular ? 18 : 14)
-            .animation(.spring(response: 0.3), value: selected)
+            .frame(height: isRegular ? 34 : 28)
+            .background(selected ? Color.white : Color.white.opacity(0.10))
+            .cornerRadius(isRegular ? 17 : 14)
         }
     }
-
-    // MARK: - Bottom Toolbar Buttons
 
     private func iconButton(_ icon: String, highlight: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: isRegular ? 17 : 13, weight: .semibold))
                 .foregroundColor(highlight ? .yellow : .white)
-                .frame(width: isRegular ? 48 : 36, height: isRegular ? 48 : 36)
-                .background(Color.white.opacity(highlight ? 0.18 : 0.06))
+                .frame(width: isRegular ? 46 : 36, height: isRegular ? 44 : 36)
+                .background(Color.white.opacity(highlight ? 0.18 : 0.08))
                 .cornerRadius(isRegular ? 10 : 8)
         }
     }
@@ -194,9 +271,9 @@ struct RemoteDesktopView: View {
             Text(label)
                 .font(.system(size: isRegular ? 16 : 12, weight: .semibold))
                 .foregroundColor(.white)
-                .frame(minWidth: isRegular ? 48 : 36, minHeight: isRegular ? 48 : 36)
+                .frame(minWidth: isRegular ? 48 : 36, minHeight: isRegular ? 44 : 36)
                 .padding(.horizontal, 2)
-                .background(Color.white.opacity(0.06))
+                .background(Color.white.opacity(0.08))
                 .cornerRadius(isRegular ? 10 : 8)
         }
     }
@@ -207,17 +284,16 @@ struct RemoteDesktopView: View {
             Text(symbol)
                 .font(.system(size: isRegular ? 20 : 15, weight: .semibold))
                 .foregroundColor(active ? .black : .white)
-                .frame(width: isRegular ? 50 : 38, height: isRegular ? 48 : 36)
-                .background(active ? Color.white : Color.white.opacity(0.06))
+                .frame(width: isRegular ? 48 : 38, height: isRegular ? 44 : 36)
+                .background(active ? Color.white : Color.white.opacity(0.08))
                 .cornerRadius(isRegular ? 10 : 8)
-                .animation(.easeInOut(duration: 0.15), value: active)
         }
     }
 
     private var separator: some View {
         Rectangle()
             .fill(Color.white.opacity(0.15))
-            .frame(width: 1, height: isRegular ? 32 : 24)
+            .frame(width: 1, height: isRegular ? 30 : 22)
             .padding(.horizontal, isRegular ? 4 : 2)
     }
 }
@@ -230,12 +306,6 @@ private extension View {
         } else {
             self
         }
-    }
-}
-
-extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
     }
 }
 
@@ -260,24 +330,13 @@ struct LatencyBadge: View {
                     .font(.caption.weight(.medium))
                     .foregroundColor(.white)
             }
-            if fps > 0 {
-                Text("·")
-                    .font(.caption)
-                    .foregroundColor(.white.opacity(0.5))
-                Text("\(Int(fps.rounded()))fps")
-                    .font(.caption.weight(.medium))
-                    .foregroundColor(.white.opacity(0.8))
-            }
-            if ms == 0 && fps == 0 {
-                Text("—")
-                    .font(.caption.weight(.medium))
-                    .foregroundColor(.white)
-            }
+            Text("\(Int(fps.rounded()))fps")
+                .font(.caption.weight(.medium))
+                .foregroundColor(.white.opacity(0.9))
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(.ultraThinMaterial)
-        .cornerRadius(20)
-        .animation(.easeInOut(duration: 0.3), value: ms)
+        .frame(height: 28)
+        .background(Color.white.opacity(0.10))
+        .cornerRadius(14)
     }
 }

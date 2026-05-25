@@ -10,11 +10,6 @@ class TouchInputMapper {
     private var displayRect: CGRect = .zero
     private var isDragging = false
     private var scrollRemainder: CGPoint = .zero
-    private var pendingScrollDelta: CGPoint = .zero
-    private var pendingScrollPoint: CGPoint = .zero
-    private var hasPendingScroll = false
-    private var scrollFlushWorkItem: DispatchWorkItem?
-    private let scrollFlushInterval: TimeInterval = 1.0 / 60.0
 
     init(client: WebSocketClient) {
         self.client = client
@@ -79,12 +74,10 @@ class TouchInputMapper {
     }
 
     func beginScroll() {
-        cancelPendingScroll()
         scrollRemainder = .zero
     }
 
     func endScroll() {
-        flushPendingScroll()
         scrollRemainder = .zero
     }
 
@@ -103,49 +96,14 @@ class TouchInputMapper {
         let wholeY = accumulatedY >= 0 ? floor(accumulatedY) : ceil(accumulatedY)
         scrollRemainder = CGPoint(x: accumulatedX - wholeX, y: accumulatedY - wholeY)
         guard wholeX != 0 || wholeY != 0 else { return }
-        enqueueScroll(deltaX: wholeX, deltaY: wholeY, at: n)
-    }
-
-    private func enqueueScroll(deltaX: CGFloat, deltaY: CGFloat, at normalizedPoint: CGPoint) {
-        pendingScrollDelta.x += deltaX
-        pendingScrollDelta.y += deltaY
-        pendingScrollPoint = normalizedPoint
-        hasPendingScroll = true
-        guard scrollFlushWorkItem == nil else { return }
-
-        let workItem = DispatchWorkItem { [weak self] in
-            self?.flushPendingScroll()
-        }
-        scrollFlushWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + scrollFlushInterval, execute: workItem)
-    }
-
-    private func flushPendingScroll() {
-        scrollFlushWorkItem?.cancel()
-        scrollFlushWorkItem = nil
-        guard hasPendingScroll else { return }
-        let delta = pendingScrollDelta
-        let point = pendingScrollPoint
-        pendingScrollDelta = .zero
-        pendingScrollPoint = .zero
-        hasPendingScroll = false
-
-        // Natural scrolling: same direction as iOS, so swipe up moves content up.
+        // Natural scrolling: same direction as iOS — swipe up = content moves up
         send(MouseMessage(
-            x: Float(point.x), y: Float(point.y),
+            x: Float(n.x), y: Float(n.y),
             action: "scroll",
             displayIndex: activeDisplayIndex,
-            scrollDeltaX: Float(delta.x),
-            scrollDeltaY: Float(delta.y)
+            scrollDeltaX: Float(wholeX),
+            scrollDeltaY: Float(wholeY)
         ))
-    }
-
-    private func cancelPendingScroll() {
-        scrollFlushWorkItem?.cancel()
-        scrollFlushWorkItem = nil
-        pendingScrollDelta = .zero
-        pendingScrollPoint = .zero
-        hasPendingScroll = false
     }
 
     /// The rect within the view where the Mac screen is actually rendered.

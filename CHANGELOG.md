@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Bumped Mac to `1.2.4 (11)` and iOS to `1.2.4 (9)` for a stream smoothness rollback.
+- Restored stable H.264 send ordering by removing the build 10 latest-frame-wins backpressure path that could repeatedly drop P-frames and force keyframes under scroll load.
+- Restored immediate iOS scroll input delivery and the previous two-frame Metal in-flight limit to reduce perceived scroll lag and video stutter.
 - Bumped Mac to `1.2.4 (10)` and iOS to `1.2.4 (8)` for the native stream performance release.
 - Added latest-frame-wins WebSocket video backpressure with per-display recovery keyframes to reduce stale-frame latency and flicker under scroll load.
 - Tuned ScreenCaptureKit and H.264 for lower latency by reducing capture queue depth and encoder frame delay.

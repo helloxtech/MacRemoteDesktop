@@ -7,11 +7,6 @@ final class VNCTouchInputMapper {
     private var activeScreenFrame: CGRect?
     private var isDragging = false
     private var scrollRemainder: CGPoint = .zero
-    private var pendingScrollSteps = CGPoint.zero
-    private var pendingScrollPoint = CGPoint.zero
-    private var hasPendingScroll = false
-    private var scrollFlushWorkItem: DispatchWorkItem?
-    private let scrollFlushInterval: TimeInterval = 1.0 / 60.0
 
     init(session: VNCSessionController?) {
         self.session = session
@@ -66,12 +61,10 @@ final class VNCTouchInputMapper {
     }
 
     func beginScroll() {
-        cancelPendingScroll()
         scrollRemainder = .zero
     }
 
     func endScroll() {
-        flushPendingScroll()
         scrollRemainder = .zero
     }
 
@@ -94,41 +87,7 @@ final class VNCTouchInputMapper {
         )
 
         guard wholeX != 0 || wholeY != 0 else { return }
-        enqueueScroll(horizontalSteps: wholeX, verticalSteps: wholeY, at: normalizedPoint)
-    }
-
-    private func enqueueScroll(horizontalSteps: Int, verticalSteps: Int, at normalizedPoint: CGPoint) {
-        pendingScrollSteps.x += CGFloat(horizontalSteps)
-        pendingScrollSteps.y += CGFloat(verticalSteps)
-        pendingScrollPoint = normalizedPoint
-        hasPendingScroll = true
-        guard scrollFlushWorkItem == nil else { return }
-
-        let workItem = DispatchWorkItem { [weak self] in
-            self?.flushPendingScroll()
-        }
-        scrollFlushWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + scrollFlushInterval, execute: workItem)
-    }
-
-    private func flushPendingScroll() {
-        scrollFlushWorkItem?.cancel()
-        scrollFlushWorkItem = nil
-        guard hasPendingScroll else { return }
-        let steps = pendingScrollSteps
-        let point = pendingScrollPoint
-        pendingScrollSteps = .zero
-        pendingScrollPoint = .zero
-        hasPendingScroll = false
-        session?.scroll(horizontalSteps: Int(steps.x), verticalSteps: Int(steps.y), at: point)
-    }
-
-    private func cancelPendingScroll() {
-        scrollFlushWorkItem?.cancel()
-        scrollFlushWorkItem = nil
-        pendingScrollSteps = .zero
-        pendingScrollPoint = .zero
-        hasPendingScroll = false
+        session?.scroll(horizontalSteps: wholeX, verticalSteps: wholeY, at: normalizedPoint)
     }
 
     private func truncatingStepCount(from delta: CGFloat, stepSize: CGFloat) -> Int {

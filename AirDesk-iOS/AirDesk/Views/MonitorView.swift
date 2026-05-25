@@ -656,7 +656,7 @@ class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
     // Limit in-flight GPU frames to prevent drawable exhaustion (which blocks main thread).
     // MTKView has 3 drawables; capping at 2 in-flight guarantees one is always free.
     private var inflightCount = 0
-    private let maxInflight = 1
+    private let maxInflight = 2
     private var needsDeferredDraw = false
 
     init?(device: MTLDevice, mtkView: MTKView) {

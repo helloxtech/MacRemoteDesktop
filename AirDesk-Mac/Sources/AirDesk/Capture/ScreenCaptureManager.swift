@@ -119,6 +119,7 @@ final class ScreenCaptureManager: NSObject, @unchecked Sendable {
                 config.width = display.width
                 config.height = display.height
                 config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+                config.queueDepth = 2
                 config.pixelFormat = kCVPixelFormatType_32BGRA
                 config.scalesToFit = false
 
@@ -143,6 +144,7 @@ final class ScreenCaptureManager: NSObject, @unchecked Sendable {
                     return
                 }
                 print("[AirDesk] Started capture for display \(index)")
+                AirDeskDiagnostics.shared.record("Started low-latency capture for display \(index) queueDepth=2 fps=30")
             }
 
             captureQueue.async { [weak self] in

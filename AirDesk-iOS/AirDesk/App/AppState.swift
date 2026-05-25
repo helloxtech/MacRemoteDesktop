@@ -51,9 +51,9 @@ final class FrameDecoderStore {
     private var fpsFrameCount = 0
     private var fpsWindowStart: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
 
-    func decode(_ data: Data, displayIndex: Int, isKeyframe: Bool) {
+    func decode(_ data: Data, payloadOffset: Int, displayIndex: Int, isKeyframe: Bool) {
         queue.async { [weak self] in
-            self?.decodeFrame(data, displayIndex: displayIndex, isKeyframe: isKeyframe)
+            self?.decodeFrame(data, payloadOffset: payloadOffset, displayIndex: displayIndex, isKeyframe: isKeyframe)
         }
     }
 
@@ -67,7 +67,7 @@ final class FrameDecoderStore {
         }
     }
 
-    private func decodeFrame(_ data: Data, displayIndex: Int, isKeyframe: Bool) {
+    private func decodeFrame(_ data: Data, payloadOffset: Int, displayIndex: Int, isKeyframe: Bool) {
         if videoDecoders[displayIndex] == nil {
             let decoder = VideoDecoder(displayIndex: displayIndex)
             decoder.frameHandler = { [weak self] pixelBuffer, idx in
@@ -78,7 +78,7 @@ final class FrameDecoderStore {
             }
             videoDecoders[displayIndex] = decoder
         }
-        videoDecoders[displayIndex]?.decode(data, isKeyframe: isKeyframe)
+        videoDecoders[displayIndex]?.decode(data, payloadOffset: payloadOffset, isKeyframe: isKeyframe)
     }
 
     private func handleDecodedFrame(_ pixelBuffer: CVPixelBuffer, displayIndex: Int) {
@@ -233,8 +233,8 @@ class AppState: ObservableObject {
         }
 
         // Video frames arrive on URLSession background thread — decode off main actor
-        client.onVideoFrame = { data, displayIndex, isKeyframe, _ in
-            decoderStore.decode(data, displayIndex: displayIndex, isKeyframe: isKeyframe)
+        client.onVideoFrame = { data, displayIndex, isKeyframe, _, payloadOffset in
+            decoderStore.decode(data, payloadOffset: payloadOffset, displayIndex: displayIndex, isKeyframe: isKeyframe)
         }
 
         client.onDisconnect = { [weak self] error in

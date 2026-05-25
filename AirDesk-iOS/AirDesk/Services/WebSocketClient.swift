@@ -29,7 +29,7 @@ class WebSocketClient: NSObject {
 
     var onMonitorsReceived: (([MonitorInfo]) -> Void)?
     // timestampMs added so AppState can compute latency
-    var onVideoFrame: ((Data, Int, Bool, UInt32) -> Void)?
+    var onVideoFrame: ((Data, Int, Bool, UInt32, Int) -> Void)?
     var onDisconnect: ((Error?) -> Void)?
     var onReconnectScheduled: ((Int, TimeInterval) -> Void)?
     var onClipboardChanged: ((String) -> Void)?
@@ -267,13 +267,11 @@ class WebSocketClient: NSObject {
             return UInt32(ptr[0]) << 24 | UInt32(ptr[1]) << 16 | UInt32(ptr[2]) << 8 | UInt32(ptr[3])
         }
         let isKeyframe = (data[6] & 0x01) != 0
-        let videoData = data.subdata(in: 7..<data.count)
-
         let nowMs = UInt32(CACurrentMediaTime() * 1000) & 0xFFFFFFFF
         let latency = Int(nowMs &- tsMs)
         if shouldPublishLatencyOnQueue(latency) { onLatencyUpdate?(latency) }
 
-        onVideoFrame?(videoData, displayIndex, isKeyframe, tsMs)
+        onVideoFrame?(data, displayIndex, isKeyframe, tsMs, 7)
     }
 
     private func shouldPublishLatencyOnQueue(_ latency: Int) -> Bool {

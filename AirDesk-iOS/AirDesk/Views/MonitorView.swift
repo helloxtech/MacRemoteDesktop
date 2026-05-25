@@ -58,6 +58,7 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
     private var inputEnabled = true
     private var refreshTimer: Timer?
     private var lastFrameTime: CFAbsoluteTime = 0
+    private var isFrameDrawScheduled = false
     private var hasInitializedViewport = false
 
     init(monitor: MonitorInfo, displayIndex: Int) {
@@ -120,6 +121,7 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         // Stop Metal draws but keep renderer alive for potential viewDidAppear re-use.
         // ARC will clean up the renderer when the VC is deallocated.
         mtkView.delegate = nil
+        isFrameDrawScheduled = false
     }
 
     /// Requests one extra stream only if the view appears and no frame arrives.
@@ -272,13 +274,22 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         rendererLock.unlock()
         r?.updateFrame(pixelBuffer)
         if Thread.isMainThread {
-            lastFrameTime = CFAbsoluteTimeGetCurrent()
-            mtkView?.setNeedsDisplay()
+            scheduleFrameDrawOnMain()
         } else {
             DispatchQueue.main.async { [weak self] in
-                self?.lastFrameTime = CFAbsoluteTimeGetCurrent()
-                self?.mtkView?.setNeedsDisplay()
+                self?.scheduleFrameDrawOnMain()
             }
+        }
+    }
+
+    private func scheduleFrameDrawOnMain() {
+        lastFrameTime = CFAbsoluteTimeGetCurrent()
+        guard !isFrameDrawScheduled else { return }
+        isFrameDrawScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.isFrameDrawScheduled = false
+            self.mtkView?.setNeedsDisplay()
         }
     }
 
@@ -645,7 +656,7 @@ class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
     // Limit in-flight GPU frames to prevent drawable exhaustion (which blocks main thread).
     // MTKView has 3 drawables; capping at 2 in-flight guarantees one is always free.
     private var inflightCount = 0
-    private let maxInflight = 2
+    private let maxInflight = 1
     private var needsDeferredDraw = false
 
     init?(device: MTLDevice, mtkView: MTKView) {

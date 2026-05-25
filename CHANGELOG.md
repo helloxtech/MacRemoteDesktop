@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Bumped Mac to `1.2.4 (10)` and iOS to `1.2.4 (8)` for the native stream performance release.
+- Added latest-frame-wins WebSocket video backpressure with per-display recovery keyframes to reduce stale-frame latency and flicker under scroll load.
+- Tuned ScreenCaptureKit and H.264 for lower latency by reducing capture queue depth and encoder frame delay.
+- Reduced iOS scroll and rendering pressure by coalescing scroll input, coalescing Metal redraw requests, and avoiding an extra copy of each incoming video packet.
 - Reduced scroll flicker by avoiding repeated CoreGraphics snapshot frames while ScreenCaptureKit is already producing fresh stream frames.
 - Bumped the Mac companion build to `1.2.4 (9)` for the website scroll-flicker hotfix.
 - Added a Move to Trash action to the Mac installer cleanup reminder.

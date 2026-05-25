@@ -28,9 +28,9 @@ class VideoDecoder {
         let length: Int   // byte length of NALU data
     }
 
-    private func parseNALUnits(from data: Data) -> [NALUnit] {
+    private func parseNALUnits(from data: Data, payloadOffset: Int) -> [NALUnit] {
         var nalus: [NALUnit] = []
-        var offset = 0
+        var offset = payloadOffset
 
         while offset < data.count - 4 {
             guard data[offset] == 0, data[offset+1] == 0,
@@ -57,18 +57,18 @@ class VideoDecoder {
 
     // MARK: - Decode (single pass)
 
-    func decode(_ annexBData: Data, isKeyframe: Bool) {
+    func decode(_ packetData: Data, payloadOffset: Int, isKeyframe: Bool) {
         if waitingForKeyframe && !isKeyframe { return }
 
         // Single pass: parse all NALUs, extract SPS/PPS, and build AVCC
-        let nalus = parseNALUnits(from: annexBData)
+        let nalus = parseNALUnits(from: packetData, payloadOffset: payloadOffset)
 
         if isKeyframe {
             var newSPS: Data?
             var newPPS: Data?
             for nalu in nalus {
-                if nalu.type == 7 { newSPS = Data(annexBData[nalu.offset..<(nalu.offset + nalu.length)]) }
-                if nalu.type == 8 { newPPS = Data(annexBData[nalu.offset..<(nalu.offset + nalu.length)]) }
+                if nalu.type == 7 { newSPS = Data(packetData[nalu.offset..<(nalu.offset + nalu.length)]) }
+                if nalu.type == 8 { newPPS = Data(packetData[nalu.offset..<(nalu.offset + nalu.length)]) }
             }
             if let sps = newSPS, let pps = newPPS {
                 let parametersChanged = spsData != sps || ppsData != pps
@@ -92,11 +92,11 @@ class VideoDecoder {
         guard session != nil || createSession() else { return }
 
         // Build AVCC from video NALUs only (skip SPS=7, PPS=8)
-        var avccData = Data(capacity: annexBData.count)
+        var avccData = Data(capacity: max(0, packetData.count - payloadOffset))
         for nalu in nalus where nalu.type != 7 && nalu.type != 8 {
             var lengthBE = UInt32(nalu.length).bigEndian
             avccData.append(Data(bytes: &lengthBE, count: 4))
-            avccData.append(annexBData[nalu.offset..<(nalu.offset + nalu.length)])
+            avccData.append(packetData[nalu.offset..<(nalu.offset + nalu.length)])
         }
         guard !avccData.isEmpty else { return }
 

@@ -2,12 +2,13 @@ import ScreenCaptureKit
 import CoreGraphics
 import Foundation
 import AppKit
+import AirDeskProtocol
 
 protocol ScreenCaptureDelegate: AnyObject {
     func didCaptureFrame(_ frame: CVPixelBuffer, displayIndex: Int)
 }
 
-class ScreenCaptureManager: NSObject {
+final class ScreenCaptureManager: NSObject, @unchecked Sendable {
 
     weak var delegate: ScreenCaptureDelegate?
     var monitorConfigurationDidChange: (([MonitorInfo]) -> Void)?
@@ -20,6 +21,8 @@ class ScreenCaptureManager: NSObject {
     private var screenParametersObserver: Any?
     private var lockStatusObserver: Any?
     private var pendingRestartWorkItem: DispatchWorkItem?
+    private var captureTask: Task<Void, Never>?
+    private var captureGeneration = 0
 
     override init() {
         super.init()
@@ -42,6 +45,7 @@ class ScreenCaptureManager: NSObject {
 
     deinit {
         pendingRestartWorkItem?.cancel()
+        captureTask?.cancel()
         if let observer = screenParametersObserver {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -54,7 +58,10 @@ class ScreenCaptureManager: NSObject {
         captureQueue.async { [weak self] in
             guard let self, !self.isCapturing else { return }
             self.isCapturing = true
-            Task { await self.beginCapture() }
+            self.captureGeneration += 1
+            let generation = self.captureGeneration
+            self.captureTask?.cancel()
+            self.captureTask = Task { await self.beginCapture(generation: generation) }
         }
     }
 
@@ -62,6 +69,9 @@ class ScreenCaptureManager: NSObject {
         captureQueue.async { [weak self] in
             guard let self, self.isCapturing else { return }
             self.isCapturing = false
+            self.captureGeneration += 1
+            self.captureTask?.cancel()
+            self.captureTask = nil
             self.pendingRestartWorkItem?.cancel()
             self.pendingRestartWorkItem = nil
             let streamsToStop = self.streams
@@ -81,9 +91,11 @@ class ScreenCaptureManager: NSObject {
         captureQueue.sync { monitorInfos }
     }
 
-    private func beginCapture() async {
+    private func beginCapture(generation: Int) async {
         do {
+            guard isCaptureActive(generation) else { return }
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            guard isCaptureActive(generation) else { return }
             let activeDisplayIDs = Self.activeDisplayIDs()
             let scaleByDisplayID = Self.scaleFactorsByDisplayID()
             let displaysByID = Dictionary(uniqueKeysWithValues: content.displays.map { ($0.displayID, $0) })
@@ -101,6 +113,7 @@ class ScreenCaptureManager: NSObject {
             }
 
             for (index, display) in sortedDisplays.enumerated() {
+                guard isCaptureActive(generation) else { return }
                 let filter = SCContentFilter(display: display, excludingWindows: [])
                 let config = SCStreamConfiguration()
                 config.width = display.width
@@ -109,26 +122,50 @@ class ScreenCaptureManager: NSObject {
                 config.pixelFormat = kCVPixelFormatType_32BGRA
                 config.scalesToFit = false
 
-                let stream = SCStream(filter: filter, configuration: config, delegate: nil)
+                let stream = SCStream(filter: filter, configuration: config, delegate: self)
                 try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "airdesk.capture.\(index)"))
 
                 // Register the stream→index mapping BEFORE startCapture() so that
                 // didOutputSampleBuffer can always find the correct displayIndex.
+                var didRegisterStream = false
                 captureQueue.sync {
-                    self.streams.append(stream)
-                    self.streamIndexMap[ObjectIdentifier(stream)] = index
+                    if self.isCapturing && self.captureGeneration == generation {
+                        self.streams.append(stream)
+                        self.streamIndexMap[ObjectIdentifier(stream)] = index
+                        didRegisterStream = true
+                    }
                 }
+                guard didRegisterStream else { return }
 
                 try await stream.startCapture()
+                if !isCaptureActive(generation) {
+                    try? await stream.stopCapture()
+                    return
+                }
                 print("[AirDesk] Started capture for display \(index)")
             }
 
-            captureQueue.async {
+            captureQueue.async { [weak self] in
+                guard let self else { return }
+                guard self.isCapturing && self.captureGeneration == generation else { return }
                 self.monitorInfos = infos
                 self.monitorConfigurationDidChange?(infos)
             }
         } catch {
-            captureQueue.async { self.isCapturing = false }
+            let streamsToStop = captureQueue.sync { () -> [SCStream] in
+                guard self.captureGeneration == generation else { return [] }
+                self.isCapturing = false
+                self.captureTask = nil
+                let currentStreams = self.streams
+                self.streams.removeAll()
+                self.streamIndexMap.removeAll()
+                self.monitorInfos.removeAll()
+                self.frameLogCounter = 0
+                return currentStreams
+            }
+            for stream in streamsToStop {
+                try? await stream.stopCapture()
+            }
             print("[AirDesk] ScreenCaptureManager error: \(error)")
         }
     }
@@ -139,7 +176,8 @@ class ScreenCaptureManager: NSObject {
             self.pendingRestartWorkItem?.cancel()
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self, self.isCapturing else { return }
-                Task { await self.restartCapture(reason: reason) }
+                self.captureTask?.cancel()
+                self.captureTask = Task { await self.restartCapture(reason: reason) }
             }
             self.pendingRestartWorkItem = workItem
             self.captureQueue.asyncAfter(deadline: .now() + 0.25, execute: workItem)
@@ -148,18 +186,28 @@ class ScreenCaptureManager: NSObject {
 
     private func restartCapture(reason: String) async {
         print("[AirDesk] Restarting capture: \(reason)")
-        let streamsToStop = captureQueue.sync { () -> [SCStream] in
+        let state = captureQueue.sync { () -> (streams: [SCStream], generation: Int?) in
+            guard isCapturing else { return ([], nil) }
+            captureGeneration += 1
+            let generation = captureGeneration
             let currentStreams = streams
             streams.removeAll()
             streamIndexMap.removeAll()
             monitorInfos.removeAll()
             frameLogCounter = 0
-            return currentStreams
+            return (currentStreams, generation)
         }
-        for stream in streamsToStop {
+        for stream in state.streams {
             try? await stream.stopCapture()
         }
-        await beginCapture()
+        guard let generation = state.generation else { return }
+        await beginCapture(generation: generation)
+    }
+
+    private func isCaptureActive(_ generation: Int) -> Bool {
+        !Task.isCancelled && captureQueue.sync {
+            isCapturing && captureGeneration == generation
+        }
     }
 
     private static func activeDisplayIDs() -> [CGDirectDisplayID] {
@@ -183,13 +231,43 @@ class ScreenCaptureManager: NSObject {
 
 extension ScreenCaptureManager: SCStreamOutput {
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen,
-              let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        let displayIndex = streamIndexMap[ObjectIdentifier(stream)] ?? 0
-        frameLogCounter += 1
-        if frameLogCounter <= 3 || frameLogCounter % 300 == 0 {
-            print("[AirDesk] SCK frame #\(frameLogCounter) display=\(displayIndex) \(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer))")
+        guard type == .screen else { return }
+
+        if let status = frameStatus(for: sampleBuffer),
+           status != .complete,
+           status != .started {
+            if status == .stopped || status == .suspended {
+                scheduleCaptureRestart(reason: "ScreenCaptureKit stream status \(status.rawValue)")
+            }
+            return
         }
-        delegate?.didCaptureFrame(pixelBuffer, displayIndex: displayIndex)
+
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        captureQueue.async { [weak self] in
+            guard let self, self.isCapturing else { return }
+            let displayIndex = self.streamIndexMap[ObjectIdentifier(stream)] ?? 0
+            self.frameLogCounter += 1
+            if self.frameLogCounter <= 3 || self.frameLogCounter % 300 == 0 {
+                print("[AirDesk] SCK frame #\(self.frameLogCounter) display=\(displayIndex) \(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer))")
+            }
+            self.delegate?.didCaptureFrame(pixelBuffer, displayIndex: displayIndex)
+        }
+    }
+
+    private func frameStatus(for sampleBuffer: CMSampleBuffer) -> SCFrameStatus? {
+        guard let attachmentsArray = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+              let attachments = attachmentsArray.first,
+              let rawValue = attachments[.status] as? Int else { return nil }
+        return SCFrameStatus(rawValue: rawValue)
+    }
+}
+
+extension ScreenCaptureManager: SCStreamDelegate {
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        let displayIndex = captureQueue.sync {
+            streamIndexMap[ObjectIdentifier(stream)] ?? -1
+        }
+        print("[AirDesk] ScreenCaptureKit stream stopped display=\(displayIndex): \(error)")
+        scheduleCaptureRestart(reason: "ScreenCaptureKit stream stopped")
     }
 }

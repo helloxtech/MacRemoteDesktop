@@ -5,6 +5,13 @@ options:
     iOS: "16.0"
   xcodeVersion: "15"
   createIntermediateGroups: true
+  postGenCommand: ../scripts/patch_local_package_refs.sh AirDesk.xcodeproj/project.pbxproj AirDeskProtocol ../Shared/AirDeskProtocol
+
+packages:
+  AirDeskProtocol:
+    path: ../Shared/AirDeskProtocol
+  RoyalVNCKit:
+    path: ../Vendor/royalvnc
 
 targets:
   AirDesk:
@@ -15,13 +22,50 @@ targets:
       - path: AirDesk/Assets.xcassets
     info:
       path: AirDesk/Info.plist
+      properties:
+        CFBundleDisplayName: AirDesk
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleURLTypes:
+          - CFBundleURLSchemes:
+              - airdesk
+        NSBonjourServices:
+          - _airdesk._tcp
+        NSCameraUsageDescription: AirDesk uses the camera to scan QR codes for quick connection.
+        NSLocalNetworkUsageDescription: AirDesk uses your local network to find and connect to your Mac.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations: {}
+        UIRequiredDeviceCapabilities:
+          - metal
+          - arm64
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.helloxtech.airdesk.ios
-        MARKETING_VERSION: 1.0.0
+        MARKETING_VERSION: 1.2.4
+        CURRENT_PROJECT_VERSION: 7
         SWIFT_VERSION: 5.9
         INFOPLIST_FILE: AirDesk/Info.plist
-        DEVELOPMENT_TEAM: CY583Y3KM9
+        DEVELOPMENT_TEAM: JQUJYL5AF4
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1,2"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    dependencies:
+      - package: AirDeskProtocol
+        product: AirDeskProtocol
+      - package: RoyalVNCKit
+        product: RoyalVNCKit
+        embed: true
+        codeSign: true

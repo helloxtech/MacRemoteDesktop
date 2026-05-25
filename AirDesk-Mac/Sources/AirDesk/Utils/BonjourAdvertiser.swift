@@ -12,11 +12,12 @@ class BonjourAdvertiser: NSObject, NetServiceDelegate {
 
     func start() {
         let hostName = Host.current().localizedName ?? "Mac"
+        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.0"
         service = NetService(domain: "local.", type: "_airdesk._tcp.", name: hostName, port: Int32(port))
         service?.delegate = self
 
         let txtData = NetService.data(fromTXTRecord: [
-            "version": "1.0".data(using: .utf8)!,
+            "version": appVersion.data(using: .utf8)!,
             "name": hostName.data(using: .utf8)!
         ])
         service?.setTXTRecord(txtData)

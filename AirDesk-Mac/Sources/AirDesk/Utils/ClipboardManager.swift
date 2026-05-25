@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import AirDeskProtocol
 
 class ClipboardManager {
     weak var server: WebSocketServer?

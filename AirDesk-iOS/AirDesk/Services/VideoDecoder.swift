@@ -7,11 +7,14 @@ class VideoDecoder {
 
     let displayIndex: Int
     var frameHandler: ((CVPixelBuffer, Int) -> Void)?
+    var recoveryHandler: ((Int) -> Void)?
 
     private var session: VTDecompressionSession?
     private var formatDescription: CMVideoFormatDescription?
     private var spsData: Data?
     private var ppsData: Data?
+    private var waitingForKeyframe = true
+    private var lastRecoveryRequestTime: CFAbsoluteTime = 0
 
     init(displayIndex: Int) {
         self.displayIndex = displayIndex
@@ -55,6 +58,8 @@ class VideoDecoder {
     // MARK: - Decode (single pass)
 
     func decode(_ annexBData: Data, isKeyframe: Bool) {
+        if waitingForKeyframe && !isKeyframe { return }
+
         // Single pass: parse all NALUs, extract SPS/PPS, and build AVCC
         let nalus = parseNALUnits(from: annexBData)
 
@@ -66,13 +71,21 @@ class VideoDecoder {
                 if nalu.type == 8 { newPPS = Data(annexBData[nalu.offset..<(nalu.offset + nalu.length)]) }
             }
             if let sps = newSPS, let pps = newPPS {
+                let parametersChanged = spsData != sps || ppsData != pps
                 spsData = sps
                 ppsData = pps
-                formatDescription = nil
-                if let session { VTDecompressionSessionInvalidate(session) }
-                session = nil
-                createFormatDescription()
+                if parametersChanged {
+                    formatDescription = nil
+                    if let session {
+                        VTDecompressionSessionWaitForAsynchronousFrames(session)
+                        VTDecompressionSessionInvalidate(session)
+                    }
+                    session = nil
+                    createFormatDescription()
+                }
             }
+        } else if waitingForKeyframe {
+            return
         }
 
         guard formatDescription != nil || createFormatDescription() else { return }
@@ -89,9 +102,14 @@ class VideoDecoder {
 
         guard let sampleBuffer = createSampleBuffer(avccData: avccData) else { return }
 
-        let flags = VTDecodeFrameFlags._EnableAsynchronousDecompression
+        let flags = VTDecodeFrameFlags()
         var infoFlags = VTDecodeInfoFlags()
-        VTDecompressionSessionDecodeFrame(session!, sampleBuffer: sampleBuffer, flags: flags, frameRefcon: nil, infoFlagsOut: &infoFlags)
+        let status = VTDecompressionSessionDecodeFrame(session!, sampleBuffer: sampleBuffer, flags: flags, frameRefcon: nil, infoFlagsOut: &infoFlags)
+        if status == noErr {
+            waitingForKeyframe = false
+        } else {
+            handleDecodeError(status)
+        }
     }
 
     // MARK: - Session setup
@@ -140,8 +158,9 @@ class VideoDecoder {
         var outputCallback = VTDecompressionOutputCallbackRecord(
             decompressionOutputCallback: { refCon, _, status, _, imageBuffer, _, _ in
                 guard status == noErr, let imageBuffer = imageBuffer else {
-                    if status != noErr {
-                        NSLog("[AirDesk] VT decode error: %d", Int(status))
+                    if let refCon {
+                        let decoder = Unmanaged<VideoDecoder>.fromOpaque(refCon).takeUnretainedValue()
+                        decoder.handleDecodeError(status)
                     }
                     return
                 }
@@ -179,7 +198,39 @@ class VideoDecoder {
         return sampleBuffer
     }
 
+    private func handleDecodeError(_ status: OSStatus) {
+        NSLog("[AirDesk] VT decode error display=%d status=%d", displayIndex, Int(status))
+        resetDecodeSession(waitForFrames: false)
+        waitingForKeyframe = true
+        requestRecoveryKeyframeIfNeeded()
+    }
+
+    private func requestRecoveryKeyframeIfNeeded() {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now - lastRecoveryRequestTime >= 0.75 else { return }
+        lastRecoveryRequestTime = now
+        recoveryHandler?(displayIndex)
+    }
+
+    private func resetDecodeSession(waitForFrames: Bool) {
+        if let session {
+            if waitForFrames {
+                VTDecompressionSessionWaitForAsynchronousFrames(session)
+            }
+            VTDecompressionSessionInvalidate(session)
+        }
+        session = nil
+        formatDescription = nil
+    }
+
+    func close() {
+        frameHandler = nil
+        recoveryHandler = nil
+        resetDecodeSession(waitForFrames: true)
+        waitingForKeyframe = true
+    }
+
     deinit {
-        if let session = session { VTDecompressionSessionInvalidate(session) }
+        close()
     }
 }

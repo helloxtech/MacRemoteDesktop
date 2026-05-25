@@ -1,4 +1,5 @@
 import AppKit
+import AirDeskProtocol
 
 enum PermissionChecker {
     private static var requestedScreenRecordingThisLaunch = false
@@ -10,6 +11,36 @@ enum PermissionChecker {
 
     static func hasAccessibilityPermission() -> Bool {
         AXIsProcessTrusted()
+    }
+
+    static func currentStatusMessage() -> PermissionStatusMessage {
+        let screenRecording = hasScreenRecordingPermission()
+        let accessibility = hasAccessibilityPermission()
+
+        let message: String
+        if !screenRecording {
+            message = "Screen sharing is blocked. Enable Screen Recording for AirDesk in macOS Settings."
+        } else if !accessibility {
+            message = "Viewing only: enable Accessibility for AirDesk to allow clicks and typing."
+        } else {
+            message = "Control ready"
+        }
+
+        return PermissionStatusMessage(
+            screenRecording: screenRecording,
+            accessibility: accessibility,
+            canView: screenRecording,
+            canControl: screenRecording && accessibility,
+            message: message
+        )
+    }
+
+    static func openScreenRecordingSettings() {
+        openPrivacySettings("Privacy_ScreenCapture")
+    }
+
+    static func openAccessibilitySettings() {
+        openPrivacySettings("Privacy_Accessibility")
     }
 
     @discardableResult
@@ -29,7 +60,7 @@ enum PermissionChecker {
             message: "AirDesk still can't capture your display.\n\nIf you just enabled Screen Recording in System Settings, quit and reopen AirDesk, then click Start Sharing again.",
             action: "Open System Settings"
         ) {
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+            openScreenRecordingSettings()
         }
         return false
     }
@@ -49,8 +80,13 @@ enum PermissionChecker {
             message: "AirDesk can share your screen without Accessibility, but remote mouse and keyboard control need it.\n\nIf you just enabled Accessibility in System Settings, quit and reopen AirDesk to apply the change.",
             action: "Open System Settings"
         ) {
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+            openAccessibilitySettings()
         }
+    }
+
+    private static func openPrivacySettings(_ pane: String) {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private static func showAlert(title: String, message: String, action: String, handler: @escaping () -> Void) {

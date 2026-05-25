@@ -1,5 +1,5 @@
 # QA Test Plan — AirDesk Mac Companion App
-**QA Engineer #1 | Version 1.0**
+**QA Engineer #1 | Version 1.1.0**
 
 ---
 
@@ -26,6 +26,11 @@
 | M-06 | Multiple clients | Connect 2 iOS clients | "2 clients connected" shown |
 | M-07 | Client disconnect | Disconnect iOS client | Count decrements correctly |
 | M-08 | Quit | Click "Quit AirDesk" | App terminates, server stops |
+| M-09 | Version shown | Click menu bar icon | Menu shows installed AirDesk version/build near the top |
+| M-10 | Check for updates current or no release | Click "Check for Updates..." when latest release is not newer, or before any release exists | User sees "AirDesk is up to date" or "No AirDesk release is available yet" |
+| M-11 | Update available badge | Mock or publish newer GitHub release, then check updates | Menu bar icon shows a small purple dot and menu shows "Update Available" |
+| M-12 | In-app update download | Click update download item when a downloadable release asset exists | Installer downloads to Downloads and app offers to open it or show it in Finder |
+| M-13 | Report issue | Click "Report Issue..." | Browser opens a GitHub issue form pre-filled with AirDesk version and macOS details |
 
 ---
 
@@ -58,7 +63,7 @@
 |----|-----------|-------|-----------------|
 | WS-01 | Server starts on port 7890 | Start sharing | TCP listener on port 7890 |
 | WS-02 | WebSocket handshake | Connect client | HTTP Upgrade accepted |
-| WS-03 | screen_info sent on connect | Connect client, send connect message | JSON with monitor array received |
+| WS-03 | screen_info sent after pairing | Connect client, send valid pairing code or auth proof | JSON with monitor array received |
 | WS-04 | Video frames streamed | Connect and request stream | Binary frames arriving at ~30fps |
 | WS-05 | Binary frame header | Inspect first byte | Byte 0 = 0x01, correct display index |
 | WS-06 | Multiple clients | Connect 2 clients simultaneously | Both receive video streams |
@@ -86,7 +91,7 @@
 | ID | Test Case | Steps | Expected Result |
 |----|-----------|-------|-----------------|
 | B-01 | Service advertised | Start app | "_airdesk._tcp." visible via dns-sd on local network |
-| B-02 | TXT record | Inspect service | version=1.0, name=hostname present |
+| B-02 | TXT record | Inspect service | version=1.1.0, name=hostname present |
 | B-03 | Service removed on quit | Quit app | Service no longer visible via dns-sd |
 
 ---
@@ -95,7 +100,9 @@
 
 | ID | Test Case | Steps | Expected Result |
 |----|-----------|-------|-----------------|
-| CF-01 | cloudflared not installed | Start tunnel without cloudflared | Informative error logged, no crash |
+| CF-01 | cloudflared not installed | Start tunnel without cloudflared | User-facing install message shown, no crash |
 | CF-02 | cloudflared installed | Install cloudflared, trigger tunnel | Process spawns, URL extracted from stdout |
 | CF-03 | Tunnel URL parsed | Start tunnel | trycloudflare.com URL shown in menu |
 | CF-04 | Tunnel stop | Stop sharing | cloudflared process terminated |
+| CF-05 | Remote access notice | Enable tunnel | User sees best-effort free tunnel warning before tunnel starts |
+| CF-06 | Copy tunnel URL | Start tunnel, click Copy Tunnel URL | Active tunnel URL is copied to clipboard |

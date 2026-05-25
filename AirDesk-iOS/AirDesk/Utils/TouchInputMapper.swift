@@ -1,4 +1,5 @@
 import UIKit
+import AirDeskProtocol
 
 class TouchInputMapper {
 
@@ -8,6 +9,7 @@ class TouchInputMapper {
     private var viewport: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)
     private var displayRect: CGRect = .zero
     private var isDragging = false
+    private var scrollRemainder: CGPoint = .zero
 
     init(client: WebSocketClient) {
         self.client = client
@@ -65,9 +67,18 @@ class TouchInputMapper {
     }
 
     func handleDragEnded(at point: CGPoint, in viewSize: CGSize) {
+        guard isDragging else { return }
         isDragging = false
         let n = normalizePoint(point, viewSize: viewSize)
         send(MouseMessage(x: Float(n.x), y: Float(n.y), action: "dragEnd", displayIndex: activeDisplayIndex))
+    }
+
+    func beginScroll() {
+        scrollRemainder = .zero
+    }
+
+    func endScroll() {
+        scrollRemainder = .zero
     }
 
     /// Returns true if the point is within the rendered screen content (not in letterbox/pillarbox bars).
@@ -78,13 +89,20 @@ class TouchInputMapper {
 
     func handleScroll(deltaX: CGFloat, deltaY: CGFloat, at point: CGPoint, in viewSize: CGSize) {
         let n = normalizePoint(point, viewSize: viewSize)
+        let sensitivity: CGFloat = 1.8
+        let accumulatedX = deltaX * sensitivity + scrollRemainder.x
+        let accumulatedY = deltaY * sensitivity + scrollRemainder.y
+        let wholeX = accumulatedX >= 0 ? floor(accumulatedX) : ceil(accumulatedX)
+        let wholeY = accumulatedY >= 0 ? floor(accumulatedY) : ceil(accumulatedY)
+        scrollRemainder = CGPoint(x: accumulatedX - wholeX, y: accumulatedY - wholeY)
+        guard wholeX != 0 || wholeY != 0 else { return }
         // Natural scrolling: same direction as iOS — swipe up = content moves up
         send(MouseMessage(
             x: Float(n.x), y: Float(n.y),
             action: "scroll",
             displayIndex: activeDisplayIndex,
-            scrollDeltaX: Float(deltaX),
-            scrollDeltaY: Float(deltaY)
+            scrollDeltaX: Float(wholeX),
+            scrollDeltaY: Float(wholeY)
         ))
     }
 

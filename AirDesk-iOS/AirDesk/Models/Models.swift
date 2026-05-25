@@ -1,112 +1,279 @@
 import Foundation
 import UIKit
+import Combine
+import AirDeskProtocol
 
 struct DiscoveredHost: Identifiable, Hashable {
-    let id: UUID
+    let id: String
     let name: String
     let host: String
     let port: Int
 
     init(name: String, host: String, port: Int) {
-        self.id = UUID()
         self.name = name
         self.host = host
         self.port = port
+        self.id = "\(name)|\(host)|\(port)"
     }
 }
 
-struct MonitorInfo: Identifiable, Codable, Hashable {
-    let id: Int
-    let width: Int
-    let height: Int
-    let scaleFactor: Float
-    let name: String
+enum ConnectionMode: String, CaseIterable, Identifiable {
+    case airDesk
+    case remoteAccess
+    case vnc
 
-    var aspectRatio: CGFloat { CGFloat(width) / CGFloat(height) }
-}
+    var id: String { rawValue }
 
-struct ScreenInfoMessage: Codable {
-    let type: String
-    let monitors: [MonitorInfo]
-}
+    var title: String {
+        switch self {
+        case .airDesk: return "Local"
+        case .remoteAccess: return "Remote"
+        case .vnc: return "VNC"
+        }
+    }
 
-struct ConnectMessage: Codable {
-    let type: String
-    let clientName: String
-    let clientVersion: String
+    var iconName: String {
+        switch self {
+        case .airDesk: return "bolt.horizontal.circle"
+        case .remoteAccess: return "globe"
+        case .vnc: return "rectangle.connected.to.line.below"
+        }
+    }
 
-    init() {
-        type = "connect"
-        clientName = UIDevice.current.name
-        clientVersion = "1.0"
+    var defaultPort: Int {
+        switch self {
+        case .airDesk: return 7890
+        case .remoteAccess: return 443
+        case .vnc: return 5900
+        }
+    }
+
+    var helperText: String {
+        switch self {
+        case .airDesk:
+            return "Connect to a Mac on the same Wi-Fi using AirDesk streaming and pairing."
+        case .remoteAccess:
+            return "Connect through a Cloudflare Tunnel URL when you are away from the Mac network."
+        case .vnc:
+            return "Compatibility mode for Macs with Screen Sharing or another VNC server enabled."
+        }
     }
 }
 
-struct RequestStreamMessage: Codable {
-    let type: String
-    let displayIndex: Int
-    let fps: Int
-    let quality: String
-
-    init(displayIndex: Int, fps: Int = 30, quality: String = "high") {
-        type = "request_stream"
-        self.displayIndex = displayIndex
-        self.fps = fps
-        self.quality = quality
-    }
-}
-
-struct MouseMessage: Codable {
-    let type: String
-    let x: Float
-    let y: Float
-    let action: String
-    let scrollDeltaX: Float?
-    let scrollDeltaY: Float?
-    let displayIndex: Int
-
-    init(x: Float, y: Float, action: String, displayIndex: Int, scrollDeltaX: Float? = nil, scrollDeltaY: Float? = nil) {
-        type = "mouse"
-        self.x = x
-        self.y = y
-        self.action = action
-        self.displayIndex = displayIndex
-        self.scrollDeltaX = scrollDeltaX
-        self.scrollDeltaY = scrollDeltaY
-    }
-}
-
-struct KeyboardMessage: Codable {
-    let type: String
-    let keyCode: Int
-    let modifiers: [String]
-    let action: String
-
-    init(keyCode: Int, modifiers: [String], action: String) {
-        type = "key"
-        self.keyCode = keyCode
-        self.modifiers = modifiers
-        self.action = action
-    }
-}
-
-struct ClipboardMessage: Codable {
-    let type: String
-    let content: String
-}
-
-struct LockStatusMessage: Codable {
-    let type: String
-    let isLocked: Bool
+struct PairingChallenge: Identifiable, Equatable {
+    let id = UUID()
+    let hostName: String
+    let mode: ConnectionMode
     let message: String
 }
 
-struct SystemActionMessage: Codable {
-    let type: String
-    let action: String
+struct ConnectionRequest {
+    let mode: ConnectionMode
+    let host: DiscoveredHost
+    let pairingCode: String?
+    let vncUsername: String?
+    let vncPassword: String?
+    let remoteWebSocketURL: URL?
 
-    init(action: String) {
-        type = "system_action"
-        self.action = action
+    init(
+        mode: ConnectionMode,
+        host: DiscoveredHost,
+        pairingCode: String?,
+        vncUsername: String?,
+        vncPassword: String?,
+        remoteWebSocketURL: URL? = nil
+    ) {
+        self.mode = mode
+        self.host = host
+        self.pairingCode = pairingCode
+        self.vncUsername = vncUsername
+        self.vncPassword = vncPassword
+        self.remoteWebSocketURL = remoteWebSocketURL
+    }
+
+    func withPairingCode(_ code: String?) -> ConnectionRequest {
+        ConnectionRequest(
+            mode: mode,
+            host: host,
+            pairingCode: code,
+            vncUsername: vncUsername,
+            vncPassword: vncPassword,
+            remoteWebSocketURL: remoteWebSocketURL
+        )
+    }
+}
+
+enum RemoteAccessURLNormalizer {
+    static func webSocketURL(from rawValue: String) -> URL? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let valueWithScheme = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
+        guard var components = URLComponents(string: valueWithScheme),
+              let scheme = components.scheme?.lowercased() else {
+            return nil
+        }
+
+        switch scheme {
+        case "https":
+            components.scheme = "wss"
+        case "http":
+            components.scheme = "ws"
+        case "wss", "ws":
+            components.scheme = scheme
+        default:
+            return nil
+        }
+
+        guard let host = components.host, !host.isEmpty else { return nil }
+        return components.url
+    }
+}
+
+struct VNCDisplayInfo: Identifiable, Equatable {
+    let id: UInt32
+    let frame: CGRect
+    let index: Int
+
+    var title: String {
+        index == 0 ? "Desktop" : "Display \(index + 1)"
+    }
+
+    var aspectRatio: CGFloat {
+        guard frame.height > 0 else { return 16.0 / 10.0 }
+        return frame.width / frame.height
+    }
+
+    init(id: UInt32, frame: CGRect, index: Int = 0) {
+        self.id = id
+        self.frame = frame
+        self.index = index
+    }
+}
+
+@MainActor
+final class ConnectionDraft: ObservableObject {
+    @Published var mode: ConnectionMode = .airDesk
+    @Published var manualIP = ""
+    @Published var manualPort = String(ConnectionMode.airDesk.defaultPort)
+    @Published var remoteAccessURL = ""
+    @Published var pairingCode = ""
+    @Published var vncUsername = ""
+    @Published var vncPassword = ""
+
+    func setMode(_ newMode: ConnectionMode) {
+        let oldMode = mode
+        let trimmedPort = manualPort.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shouldReplacePort = trimmedPort.isEmpty || trimmedPort == String(oldMode.defaultPort)
+        mode = newMode
+        if shouldReplacePort {
+            manualPort = String(newMode.defaultPort)
+        }
+    }
+
+    func sanitizePairingCode() {
+        let digits = pairingCode.filter(\.isNumber)
+        let sanitized = String(digits.prefix(6))
+        if pairingCode != sanitized {
+            pairingCode = sanitized
+        }
+    }
+
+    var resolvedPort: Int? {
+        let trimmedPort = manualPort.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPort.isEmpty else { return mode.defaultPort }
+        return Int(trimmedPort)
+    }
+
+    func requestForDiscoveredHost(_ host: DiscoveredHost) -> ConnectionRequest? {
+        guard mode != .remoteAccess else { return remoteAccessRequest() }
+        let port = mode == .airDesk ? host.port : (resolvedPort ?? mode.defaultPort)
+        let resolvedHost = DiscoveredHost(name: host.name, host: host.host, port: port)
+        return makeRequest(for: resolvedHost)
+    }
+
+    func applyDiscoveredHost(_ host: DiscoveredHost) {
+        manualIP = host.host
+        if mode == .airDesk {
+            manualPort = String(host.port)
+            return
+        }
+
+        let trimmedPort = manualPort.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedPort.isEmpty || Int(trimmedPort) == nil {
+            manualPort = String(mode.defaultPort)
+        }
+    }
+
+    func manualRequest() -> ConnectionRequest? {
+        if mode == .remoteAccess {
+            return remoteAccessRequest()
+        }
+
+        let trimmedIP = manualIP.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedIP.isEmpty, let port = resolvedPort else { return nil }
+        return makeRequest(for: DiscoveredHost(name: trimmedIP, host: trimmedIP, port: port))
+    }
+
+    var normalizedRemoteAccessURL: URL? {
+        RemoteAccessURLNormalizer.webSocketURL(from: remoteAccessURL)
+    }
+
+    private func remoteAccessRequest() -> ConnectionRequest? {
+        guard let url = normalizedRemoteAccessURL else { return nil }
+        let hostName = url.host ?? url.absoluteString
+        let port = url.port ?? (url.scheme == "ws" ? 80 : 443)
+        let host = DiscoveredHost(name: hostName, host: hostName, port: port)
+        return ConnectionRequest(
+            mode: .remoteAccess,
+            host: host,
+            pairingCode: normalizedPairingCode,
+            vncUsername: nil,
+            vncPassword: nil,
+            remoteWebSocketURL: url
+        )
+    }
+
+    private func makeRequest(for host: DiscoveredHost) -> ConnectionRequest {
+        let trimmedUsername = vncUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        let password = vncPassword.isEmpty ? nil : vncPassword
+        return ConnectionRequest(
+            mode: mode,
+            host: host,
+            pairingCode: normalizedPairingCode,
+            vncUsername: trimmedUsername.isEmpty ? nil : trimmedUsername,
+            vncPassword: password
+        )
+    }
+
+    private var normalizedPairingCode: String? {
+        let digits = pairingCode.filter(\.isNumber)
+        guard !digits.isEmpty else { return nil }
+        return String(digits.prefix(6))
+    }
+}
+
+extension MonitorInfo {
+    var aspectRatio: CGFloat { CGFloat(width) / CGFloat(height) }
+}
+
+enum RemoteControlMode: String, CaseIterable, Identifiable {
+    case touch
+    case scroll
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .touch: return "Control"
+        case .scroll: return "Scroll"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .touch: return "cursorarrow.click"
+        case .scroll: return "arrow.up.arrow.down"
+        }
     }
 }

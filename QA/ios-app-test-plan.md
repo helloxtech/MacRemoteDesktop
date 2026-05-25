@@ -1,5 +1,5 @@
 # QA Test Plan — AirDesk iOS App
-**QA Engineer #2 | Version 1.0**
+**QA Engineer #2 | Version 1.2.0**
 
 ---
 
@@ -15,6 +15,11 @@
 | C-06 | Invalid IP | Enter invalid IP, tap Connect | Error message shown |
 | C-07 | Wrong port | Enter correct IP, wrong port | Connection fails gracefully, error shown |
 | C-08 | Discovery loading state | Before any Mac found | Spinner shown with "Scanning local network..." |
+| C-09 | Remote mode notice | Select Remote mode | Free tunnel best-effort relay warning is visible |
+| C-10 | Remote URL normalization | Enter a https trycloudflare.com URL | App connects with secure WebSocket tunnel URL |
+| C-11 | Invalid remote URL | Enter invalid Remote URL, tap Connect Remotely | Error message shown |
+| C-12 | Connection modes | Open the connection mode picker | Modes are labeled Local, Remote, and VNC |
+| C-13 | Local mode copy | Select Local mode | Helper text explains same-Wi-Fi AirDesk streaming and pairing |
 
 ---
 
@@ -28,6 +33,10 @@
 | CF-04 | Connection refused | Mac AirDesk not sharing | Error shown, returns to connection screen |
 | CF-05 | Reconnect on drop | Wi-Fi blip | Auto-reconnects with backoff |
 | CF-06 | Max reconnect attempts | Sustained disconnection | Stops retrying, shows error |
+| CF-07 | Remote tunnel connection | Paste active Mac tunnel URL and pairing code | Transitions to remote desktop view |
+| CF-08 | First-time Local pairing prompt | Tap a Local Mac, or tap Connect Locally, on an iPhone that has no saved AirDesk trust token | Pairing Required sheet opens and asks for the six-digit Mac menu code before connecting |
+| CF-09 | Local pairing retry | Enter the correct six-digit code in the pairing sheet | App retries automatically and transitions to remote desktop view |
+| CF-10 | Incomplete pairing code | Enter fewer than six digits in the pairing sheet | Connect action remains disabled |
 
 ---
 

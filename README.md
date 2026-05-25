@@ -47,16 +47,24 @@ Cloudflare/
 
 **iOS → Mac:**
 ```json
-{ "type": "connect", "clientName": "iPhone", "clientVersion": "1.0" }
+{ "type": "connect", "clientName": "iPhone", "clientVersion": "1.1.0", "clientID": "uuid", "pairingCode": "123456" }
+{ "type": "connect", "clientName": "iPhone", "clientVersion": "1.1.0", "clientID": "uuid", "clientNonce": "nonce", "authProof": "base64-hmac" }
 { "type": "request_stream", "displayIndex": 0, "fps": 30, "quality": "high" }
 { "type": "mouse", "x": 0.5, "y": 0.3, "action": "click", "displayIndex": 0 }
 { "type": "key", "keyCode": 0, "modifiers": ["cmd"], "action": "down" }
+{ "type": "clipboard_push", "content": "copied text" }
 ```
 
 **Mac → iOS:**
 ```json
+{ "type": "pairing_status", "paired": true, "message": "Paired", "authToken": "base64-secret" }
 { "type": "screen_info", "monitors": [{ "id": 0, "width": 2560, "height": 1600, "scaleFactor": 2.0, "name": "Built-in Display" }] }
+{ "type": "permission_status", "screenRecording": true, "accessibility": true, "canView": true, "canControl": true, "message": "Control ready" }
+{ "type": "lock_status", "isLocked": false, "message": "Control ready" }
+{ "type": "clipboard_changed", "content": "copied text" }
 ```
+
+First connection requires the six-digit code shown in the Mac menu. After pairing, the Mac stores a per-device secret and reconnects require an HMAC proof over `clientID:clientNonce`; copying only the client ID is not enough to reconnect.
 
 ### Binary frames (video)
 
@@ -92,6 +100,8 @@ On first launch:
 2. Grant **Accessibility** in System Settings → Privacy & Security
 3. Click the menu bar icon → **Start Sharing**
 
+The Mac menu shows the installed AirDesk version and can check GitHub Releases for updates. When a newer version is available, the menu bar icon shows a small purple dot. Choose **Download AirDesk ...** to download the latest installer from inside the app, or choose **Report Issue...** to open a pre-filled GitHub issue.
+
 ### iOS App
 
 **Requirements:** iOS 16.0+, Xcode 15+
@@ -102,7 +112,30 @@ xcodegen generate
 open AirDesk.xcodeproj
 ```
 
-Run on device or simulator. Both Mac and iOS must be on the same Wi-Fi network.
+Run on device or simulator. Use **Local** mode when the Mac and iOS device are on the same Wi-Fi network. The first Local connection may ask for the six-digit pairing code shown in the AirDesk Mac menu; after pairing, the iPhone or iPad is trusted for future local connections.
+
+For a signed physical-device install from the command line, run:
+
+```bash
+IOS_DEVICE_ID=<device-udid> scripts/install_ios_device.sh
+```
+
+### Remote Access
+
+Remote access uses Cloudflare Tunnel to expose the Mac AirDesk WebSocket server without router port forwarding.
+
+On the Mac:
+1. Install `cloudflared` with Homebrew.
+2. Start sharing from the AirDesk menu.
+3. Choose **Enable Remote Access (Tunnel)**.
+4. Choose **Copy Tunnel URL** after the tunnel URL appears.
+
+On iPhone or iPad:
+1. Choose **Remote** connection mode.
+2. Paste the tunnel URL.
+3. Enter the pairing code if this is the first connection from that device.
+
+Free Cloudflare tunnels are best-effort. The relay URL can change, and speed or availability may be limited.
 
 ---
 
@@ -136,7 +169,7 @@ Live at: https://airdesk-landing.pages.dev
 ## Roadmap
 
 - [x] V1: Local network (LAN) remote desktop
-- [ ] V2: Cloudflare Tunnel for remote access from anywhere
+- [x] V2: Cloudflare Tunnel for remote access from anywhere
 - [ ] V2: Clipboard sync (text + images)
 - [ ] V2: Audio streaming
 - [ ] V2: File transfer

@@ -1,16 +1,16 @@
 import CoreGraphics
 import AppKit
+import AirDeskProtocol
 
 class InputInjector: NSObject {
 
     private var accessibilityWarned = false
 
     func handleMouseMessage(_ msg: MouseMessage) {
-        if !accessibilityWarned && !AXIsProcessTrusted() {
-            NSLog("[AirDesk] WARNING: Accessibility not granted — mouse/keyboard events will be silently dropped!")
-            accessibilityWarned = true
+        guard ensureAccessibilityTrusted() else { return }
+        if msg.action != "move", msg.action != "mouseDrag", msg.action != "scroll" {
+            NSLog("[AirDesk] Mouse: \(msg.action) at (\(msg.x), \(msg.y)) display=\(msg.displayIndex)")
         }
-        NSLog("[AirDesk] Mouse: \(msg.action) at (\(msg.x), \(msg.y)) display=\(msg.displayIndex)")
         guard let display = displayForIndex(msg.displayIndex) else {
             NSLog("[AirDesk] ERROR: No display found for index \(msg.displayIndex)")
             return
@@ -62,8 +62,9 @@ class InputInjector: NSObject {
             // Warp cursor to scroll position so macOS delivers the event
             // to the correct window — no separate tap needed on iOS side.
             warpCursor(to: point)
-            let dx = Int32(msg.scrollDeltaX ?? 0)
-            let dy = Int32(msg.scrollDeltaY ?? 0)
+            let dx = Int32((msg.scrollDeltaX ?? 0).rounded())
+            let dy = Int32((msg.scrollDeltaY ?? 0).rounded())
+            guard dx != 0 || dy != 0 else { return }
             if let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0) {
                 event.post(tap: .cghidEventTap)
             }
@@ -87,12 +88,17 @@ class InputInjector: NSObject {
             } catch {
                 NSLog("[AirDesk] Failed to launch Mission Control: \(error)")
             }
+        case "open_accessibility_settings":
+            PermissionChecker.openAccessibilitySettings()
+        case "open_screen_recording_settings":
+            PermissionChecker.openScreenRecordingSettings()
         default:
             NSLog("[AirDesk] Unknown system action: \(msg.action)")
         }
     }
 
     func handleKeyboardMessage(_ msg: KeyboardMessage) {
+        guard ensureAccessibilityTrusted() else { return }
         let keyDown = msg.action == "down"
         guard let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(msg.keyCode), keyDown: keyDown) else { return }
 
@@ -108,6 +114,17 @@ class InputInjector: NSObject {
         }
         event.flags = flags
         event.post(tap: .cghidEventTap)
+    }
+
+    private func ensureAccessibilityTrusted() -> Bool {
+        guard PermissionChecker.hasAccessibilityPermission() else {
+            if !accessibilityWarned {
+                NSLog("[AirDesk] WARNING: Accessibility not granted — mouse/keyboard events are blocked.")
+                accessibilityWarned = true
+            }
+            return false
+        }
+        return true
     }
 
     /// Synchronously moves the cursor to `point`. Unlike mouseMoved CGEvent

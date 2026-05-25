@@ -1,24 +1,35 @@
 import Foundation
 import Network
+import AirDeskProtocol
 
-class WebSocketServer: NSObject, H264EncoderDelegate {
+final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable {
 
     // All access to `connections`, `latestKeyframes`, and `pendingSendCount` must happen on serverQueue
     private var connections: [NWConnection] = []
     private var latestKeyframes: [Int: Data] = [:]
     private var pendingSendCount: [ObjectIdentifier: Int] = [:]
     private var awaitingKeyframe: Set<ObjectIdentifier> = []
+    private var authorizedConnections: Set<ObjectIdentifier> = []
+    private var pendingDisplayInputRefreshes: [Int: DispatchWorkItem] = [:]
+    private var lastFrameBroadcastTime: [Int: CFAbsoluteTime] = [:]
+    private var lastDisplayInputKeyframeTime: [Int: CFAbsoluteTime] = [:]
+    private var pendingKeyboardRefresh: DispatchWorkItem?
+    private var lastKeyboardKeyframeTime: CFAbsoluteTime = 0
     private var listener: NWListener?
     private let port: UInt16
     let serverQueue = DispatchQueue(label: "airdesk.server")
-    private var lastRefreshTime: CFAbsoluteTime = 0
+    private let displayInputFallbackDelay: TimeInterval = 0.075
+    private let displayInputKeyframeInterval: CFAbsoluteTime = 0.75
+    private let keyboardInputKeyframeInterval: CFAbsoluteTime = 0.15
     private var lockObserver: Any?
+    private var permissionStatusTimer: DispatchSourceTimer?
 
     weak var inputDelegate: InputInjector?
     weak var encoder: H264Encoder?
     var clientChangeHandler: ((Int) -> Void)?
     var monitorInfoProvider: (() -> [MonitorInfo])?
     var clipboardDelegate: ClipboardManager?
+    var pairingManager: PairingManager?
 
     init(port: UInt16) {
         self.port = port
@@ -39,7 +50,9 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
         }
         listener.start(queue: serverQueue)
         print("WebSocket server started on port \(port)")
+        AirDeskDiagnostics.shared.record("WebSocket server started on port \(port)")
         setupLockDetection()
+        startPermissionStatusTimer()
     }
 
     func stop() {
@@ -51,10 +64,20 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
             self.connections.removeAll()
             self.pendingSendCount.removeAll()
             self.awaitingKeyframe.removeAll()
+            self.authorizedConnections.removeAll()
+            self.pendingDisplayInputRefreshes.values.forEach { $0.cancel() }
+            self.pendingDisplayInputRefreshes.removeAll()
+            self.lastFrameBroadcastTime.removeAll()
+            self.lastDisplayInputKeyframeTime.removeAll()
+            self.pendingKeyboardRefresh?.cancel()
+            self.pendingKeyboardRefresh = nil
+            self.lastKeyboardKeyframeTime = 0
             if let observer = self.lockObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
             self.lockObserver = nil
+            self.permissionStatusTimer?.cancel()
+            self.permissionStatusTimer = nil
         }
     }
 
@@ -62,7 +85,14 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
 
     func broadcastText(_ text: String) {
         serverQueue.async { [weak self] in
-            self?.connections.forEach { self?.sendText(text, to: $0) }
+            guard let self else { return }
+            self.authorizedConnectionList().forEach { self.sendText(text, to: $0) }
+        }
+    }
+
+    func broadcastPermissionStatus() {
+        serverQueue.async { [weak self] in
+            self?.broadcastPermissionStatusOnQueue()
         }
     }
 
@@ -91,21 +121,46 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
               let text = String(data: data, encoding: .utf8) else { return }
         broadcastText(text)
         guard !isLocked else { return }
-        encoder?.forceKeyframeOnNextFrame()
-        refreshAllDisplays()
+        serverQueue.async { [weak self] in
+            guard let self else { return }
+            self.latestKeyframes.removeAll()
+            self.awaitingKeyframe.removeAll()
+            self.refreshActiveDisplaysOnQueue()
+            self.scheduleActiveDisplayRefreshOnQueue(after: 0.45)
+            self.scheduleActiveDisplayRefreshOnQueue(after: 1.0)
+        }
     }
 
     func handleMonitorConfigurationChange(_ monitors: [MonitorInfo]) {
         serverQueue.async { [weak self] in
             guard let self else { return }
-            self.latestKeyframes = self.latestKeyframes.filter { $0.key < monitors.count }
+            self.latestKeyframes.removeAll()
             self.awaitingKeyframe.removeAll()
             let msg = ScreenInfoMessage(monitors: monitors)
             guard let data = try? JSONEncoder().encode(msg),
                   let text = String(data: data, encoding: .utf8) else { return }
-            self.connections.forEach { self.sendText(text, to: $0) }
-            self.encoder?.forceKeyframeOnNextFrame()
-            self.refreshAllDisplays()
+            self.authorizedConnectionList().forEach { self.sendText(text, to: $0) }
+            self.refreshDisplaysOnQueue(monitors.map(\.id))
+        }
+    }
+
+    private func refreshActiveDisplaysOnQueue() {
+        dispatchPrecondition(condition: .onQueue(serverQueue))
+        let displayIndexes = (monitorInfoProvider?() ?? []).map(\.id)
+        refreshDisplaysOnQueue(displayIndexes.isEmpty ? [0] : displayIndexes)
+    }
+
+    private func refreshDisplaysOnQueue(_ displayIndexes: [Int]) {
+        dispatchPrecondition(condition: .onQueue(serverQueue))
+        for displayIndex in displayIndexes {
+            encoder?.captureAndEncodeImmediate(displayIndex: displayIndex, forceKeyframe: true)
+        }
+    }
+
+    private func scheduleActiveDisplayRefreshOnQueue(after delay: TimeInterval) {
+        dispatchPrecondition(condition: .onQueue(serverQueue))
+        serverQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.refreshActiveDisplaysOnQueue()
         }
     }
 
@@ -114,9 +169,9 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
     private func handleNewConnection(_ connection: NWConnection) {
         dispatchPrecondition(condition: .onQueue(serverQueue))
         print("New WebSocket connection from \(connection.endpoint)")
+        AirDeskDiagnostics.shared.record("New connection from \(connection.endpoint)")
         connections.append(connection)
-        let count = connections.count
-        DispatchQueue.main.async { self.clientChangeHandler?(count) }
+        notifyAuthorizedClientCount()
 
         connection.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
@@ -127,9 +182,9 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
                     let id = ObjectIdentifier(connection)
                     self.pendingSendCount.removeValue(forKey: id)
                     self.awaitingKeyframe.remove(id)
+                    self.authorizedConnections.remove(id)
                     self.connections.removeAll { $0 === connection }
-                    let count = self.connections.count
-                    DispatchQueue.main.async { self.clientChangeHandler?(count) }
+                    self.notifyAuthorizedClientCount()
                 default:
                     break
                 }
@@ -138,7 +193,6 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
 
         connection.start(queue: serverQueue)
         receive(from: connection)
-        encoder?.forceKeyframeOnNextFrame()
     }
 
     private func receive(from connection: NWConnection) {
@@ -161,48 +215,186 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
     }
 
     private func handleTextMessage(_ text: String, from connection: NWConnection) {
-        print("Received text: \(text.prefix(200))")
         let message = parseIncomingMessage(text)
         switch message {
-        case .connect:
+        case .connect(let msg):
+            guard authorizeConnection(connection, message: msg) else { return }
             print("Sending screen info")
             sendScreenInfo(to: connection)
             sendCurrentLockStatus(to: connection)
+            sendPermissionStatus(to: connection)
         case .mouse(let msg):
+            guard isAuthorized(connection) else {
+                sendPairingRequired(to: connection)
+                return
+            }
+            guard PermissionChecker.hasAccessibilityPermission() else {
+                sendPermissionStatus(to: connection)
+                return
+            }
             inputDelegate?.handleMouseMessage(msg)
-            // Only capture refresh frames for discrete actions (click, doubleClick, rightClick).
-            // Continuous actions (scroll, drag, move) generate many events per second —
-            // ScreenCaptureKit already captures those screen changes naturally.
-            // Firing CGDisplayCreateImage captures during scroll causes visible flashing
-            // because CGDisplayCreateImage produces frames that look different from SCK.
             switch msg.action {
             case "click", "doubleClick", "rightClick", "dragEnd":
-                scheduleRefreshCapture(displayIndex: msg.displayIndex)
+                encoder?.forceKeyframeOnNextFrame(displayIndex: msg.displayIndex)
+            case "scroll":
+                scheduleDisplayVisualRefreshAfterInput(displayIndex: msg.displayIndex)
             default:
                 break
             }
         case .keyboard(let msg):
+            guard isAuthorized(connection) else {
+                sendPairingRequired(to: connection)
+                return
+            }
+            guard PermissionChecker.hasAccessibilityPermission() else {
+                sendPermissionStatus(to: connection)
+                return
+            }
             inputDelegate?.handleKeyboardMessage(msg)
-            scheduleRefreshCapture(displayIndex: 0)
+            if msg.action == "down" {
+                scheduleKeyboardVisualRefreshAfterInput()
+            }
+            if msg.action == "up", msg.keyCode == 36 {
+                scheduleActiveDisplayRefreshOnQueue(after: 0.25)
+                scheduleActiveDisplayRefreshOnQueue(after: 0.8)
+            }
         case .clipboard(let msg):
+            guard isAuthorized(connection) else {
+                sendPairingRequired(to: connection)
+                return
+            }
             clipboardDelegate?.writeToClipboard(msg.content)
         case .systemAction(let msg):
+            guard isAuthorized(connection) else {
+                sendPairingRequired(to: connection)
+                return
+            }
             DispatchQueue.main.async { self.inputDelegate?.handleSystemAction(msg) }
         case .requestStream(let msg):
+            guard isAuthorized(connection) else {
+                sendPairingRequired(to: connection)
+                return
+            }
             print("Client requested stream for display \(msg.displayIndex) at \(msg.fps)fps quality=\(msg.quality)")
-            encoder?.forceKeyframeOnNextFrame()
             // Send cached keyframe immediately so client doesn't wait for next screen change
             if let cached = latestKeyframes[msg.displayIndex] {
                 sendBinary(cached, to: connection)
             }
-            // Also capture a fresh frame directly — works even when screen is static
-            encoder?.captureAndEncodeImmediate(displayIndex: msg.displayIndex)
+            encoder?.captureAndEncodeImmediate(displayIndex: msg.displayIndex, forceKeyframe: true)
         case .unknown:
+            if isConnectLikeMessage(text) {
+                let status = PairingStatusMessage(
+                    paired: false,
+                    message: "This iOS AirDesk app is not compatible with the current Mac app. Update the iOS app, then enter the pairing code shown in the AirDesk Mac menu."
+                )
+                AirDeskDiagnostics.shared.record("Rejected malformed native connect request")
+                sendPairingStatus(status, to: connection)
+            }
             break
         }
     }
 
+    private func scheduleDisplayVisualRefreshAfterInput(displayIndex: Int) {
+        dispatchPrecondition(condition: .onQueue(serverQueue))
+        let now = CFAbsoluteTimeGetCurrent()
+        scheduleFallbackDisplayRefresh(displayIndex: displayIndex, inputTime: now)
+        scheduleDisplayInputRecoveryKeyframeIfNeeded(displayIndex: displayIndex, now: now)
+    }
+
+    private func scheduleFallbackDisplayRefresh(displayIndex: Int, inputTime: CFAbsoluteTime) {
+        dispatchPrecondition(condition: .onQueue(serverQueue))
+        pendingDisplayInputRefreshes[displayIndex]?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingDisplayInputRefreshes[displayIndex] = nil
+            guard !self.authorizedConnectionList().isEmpty else { return }
+            if (self.lastFrameBroadcastTime[displayIndex] ?? 0) >= inputTime {
+                return
+            }
+            self.encoder?.captureAndEncodeImmediate(displayIndex: displayIndex, forceKeyframe: false)
+        }
+        pendingDisplayInputRefreshes[displayIndex] = workItem
+        serverQueue.asyncAfter(deadline: .now() + displayInputFallbackDelay, execute: workItem)
+    }
+
+    private func scheduleDisplayInputRecoveryKeyframeIfNeeded(displayIndex: Int, now: CFAbsoluteTime) {
+        dispatchPrecondition(condition: .onQueue(serverQueue))
+        let elapsed = now - (lastDisplayInputKeyframeTime[displayIndex] ?? 0)
+        guard elapsed >= displayInputKeyframeInterval else { return }
+        lastDisplayInputKeyframeTime[displayIndex] = now
+        encoder?.forceKeyframeOnNextFrame(displayIndex: displayIndex)
+    }
+
+    private func scheduleKeyboardVisualRefreshAfterInput() {
+        dispatchPrecondition(condition: .onQueue(serverQueue))
+        let now = CFAbsoluteTimeGetCurrent()
+        let elapsed = now - lastKeyboardKeyframeTime
+
+        if elapsed >= keyboardInputKeyframeInterval {
+            pendingKeyboardRefresh?.cancel()
+            pendingKeyboardRefresh = nil
+            lastKeyboardKeyframeTime = now
+            encoder?.forceKeyframeOnNextFrame()
+            return
+        }
+
+        guard pendingKeyboardRefresh == nil else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingKeyboardRefresh = nil
+            guard !self.authorizedConnectionList().isEmpty else { return }
+            self.lastKeyboardKeyframeTime = CFAbsoluteTimeGetCurrent()
+            self.encoder?.forceKeyframeOnNextFrame()
+        }
+        pendingKeyboardRefresh = workItem
+        serverQueue.asyncAfter(deadline: .now() + (keyboardInputKeyframeInterval - elapsed), execute: workItem)
+    }
+
+    private func isConnectLikeMessage(_ text: String) -> Bool {
+        guard let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = json["type"] as? String else { return false }
+        return type == "connect"
+    }
+
+    private func authorizeConnection(_ connection: NWConnection, message: ConnectMessage) -> Bool {
+        let status = pairingManager?.authorize(message)
+            ?? PairingStatusMessage(paired: true, message: "Paired")
+        sendPairingStatus(status, to: connection)
+        guard status.paired else { return false }
+        authorizedConnections.insert(ObjectIdentifier(connection))
+        notifyAuthorizedClientCount()
+        return true
+    }
+
+    private func isAuthorized(_ connection: NWConnection) -> Bool {
+        authorizedConnections.contains(ObjectIdentifier(connection))
+    }
+
+    private func authorizedConnectionList() -> [NWConnection] {
+        connections.filter { authorizedConnections.contains(ObjectIdentifier($0)) }
+    }
+
+    private func notifyAuthorizedClientCount() {
+        let count = authorizedConnectionList().count
+        DispatchQueue.main.async { self.clientChangeHandler?(count) }
+    }
+
+    private func sendPairingRequired(to connection: NWConnection) {
+        sendPairingStatus(
+            PairingStatusMessage(paired: false, message: "Pairing required. Enter the code shown in the AirDesk Mac menu."),
+            to: connection
+        )
+    }
+
+    private func sendPairingStatus(_ status: PairingStatusMessage, to connection: NWConnection) {
+        guard let data = try? JSONEncoder().encode(status),
+              let text = String(data: data, encoding: .utf8) else { return }
+        sendText(text, to: connection)
+    }
+
     private func sendScreenInfo(to connection: NWConnection) {
+        guard isAuthorized(connection) else { return }
         let monitors = monitorInfoProvider?() ?? []
         let msg = ScreenInfoMessage(monitors: monitors)
         guard let data = try? JSONEncoder().encode(msg),
@@ -217,7 +409,41 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
         connection.send(content: data, contentContext: ctx, isComplete: true, completion: .idempotent)
     }
 
+    private func startPermissionStatusTimer() {
+        serverQueue.async { [weak self] in
+            guard let self, self.permissionStatusTimer == nil else { return }
+            let timer = DispatchSource.makeTimerSource(queue: self.serverQueue)
+            timer.schedule(deadline: .now() + 1.0, repeating: .seconds(3))
+            timer.setEventHandler { [weak self] in
+                self?.broadcastPermissionStatusOnQueue()
+            }
+            self.permissionStatusTimer = timer
+            timer.resume()
+        }
+    }
+
+    private func broadcastPermissionStatusOnQueue() {
+        dispatchPrecondition(condition: .onQueue(serverQueue))
+        let targets = authorizedConnectionList()
+        guard !targets.isEmpty else { return }
+        guard let text = permissionStatusText() else { return }
+        targets.forEach { sendText(text, to: $0) }
+    }
+
+    private func sendPermissionStatus(to connection: NWConnection) {
+        guard isAuthorized(connection) else { return }
+        guard let text = permissionStatusText() else { return }
+        sendText(text, to: connection)
+    }
+
+    private func permissionStatusText() -> String? {
+        let msg = PermissionChecker.currentStatusMessage()
+        guard let data = try? JSONEncoder().encode(msg) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
     private func sendBinary(_ data: Data, to connection: NWConnection) {
+        guard isAuthorized(connection) else { return }
         let id = ObjectIdentifier(connection)
         pendingSendCount[id, default: 0] += 1
         let metadata = NWProtocolWebSocket.Metadata(opcode: .binary)
@@ -231,46 +457,19 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
     }
 
     private func sendCurrentLockStatus(to connection: NWConnection) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
+        let queue = serverQueue
+        Task { @MainActor in
             let status = LockStatusMonitor.shared.isLocked
-            self.serverQueue.async {
-                let msg = LockStatusMessage(
-                    isLocked: status,
-                    message: status ? "Screen is locked — viewing only" : "Control ready"
-                )
-                guard let data = try? JSONEncoder().encode(msg),
-                      let text = String(data: data, encoding: .utf8) else { return }
+            let msg = LockStatusMessage(
+                isLocked: status,
+                message: status ? "Screen is locked — viewing only" : "Control ready"
+            )
+            guard let data = try? JSONEncoder().encode(msg),
+                  let text = String(data: data, encoding: .utf8) else { return }
+            queue.async { [weak self] in
+                guard let self else { return }
+                guard self.isAuthorized(connection) else { return }
                 self.sendText(text, to: connection)
-            }
-        }
-    }
-
-    private func refreshAllDisplays() {
-        let displayCount = monitorInfoProvider?().count ?? 0
-        guard displayCount > 0 else { return }
-        for index in 0..<displayCount {
-            for delay in [0.02, 0.15, 0.4] {
-                serverQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
-                    self?.encoder?.captureAndEncodeImmediate(displayIndex: index)
-                }
-            }
-        }
-    }
-
-    /// Triggers CGDisplayCreateImage captures after input events to ensure
-    /// the iOS display refreshes even if ScreenCaptureKit misses the change.
-    /// Fires a short burst of captures to catch UI animations (e.g. new tab
-    /// opening, menu appearing).
-    private func scheduleRefreshCapture(displayIndex: Int) {
-        let now = CFAbsoluteTimeGetCurrent()
-        guard now - lastRefreshTime > 0.033 else { return }
-        lastRefreshTime = now
-        // Burst: capture at 10ms, 100ms, 250ms, and 500ms after the event
-        // to catch both instant changes and short animations.
-        for delay in [0.01, 0.1, 0.25, 0.5] {
-            serverQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.encoder?.captureAndEncodeImmediate(displayIndex: displayIndex)
             }
         }
     }
@@ -287,13 +486,15 @@ class WebSocketServer: NSObject, H264EncoderDelegate {
             guard let self else { return }
             var shouldForceKeyframe = false
             self.broadcastLogCounter += 1
+            let targets = self.authorizedConnectionList()
             if self.broadcastLogCounter <= 3 || self.broadcastLogCounter % 300 == 0 {
-                print("[AirDesk] Broadcasting frame #\(self.broadcastLogCounter) (\(frame.count) bytes) to \(self.connections.count) clients")
+                print("[AirDesk] Broadcasting frame #\(self.broadcastLogCounter) (\(frame.count) bytes) to \(targets.count) paired clients")
             }
             if isKeyframe {
                 self.latestKeyframes[displayIndex] = frame
             }
-            for conn in self.connections {
+            self.lastFrameBroadcastTime[displayIndex] = CFAbsoluteTimeGetCurrent()
+            for conn in targets {
                 let id = ObjectIdentifier(conn)
                 if self.awaitingKeyframe.contains(id) {
                     if isKeyframe {

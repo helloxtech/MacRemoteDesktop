@@ -11,8 +11,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var bonjourAdvertiser: BonjourAdvertiser!
     private var cloudflareTunnelManager: CloudflareTunnelManager!
     private var clipboardManager: ClipboardManager!
+    private var pairingManager: PairingManager!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AirDeskDiagnostics.shared.installCrashMarker()
+        AirDeskDiagnostics.shared.record("Application launched")
         inputInjector = InputInjector()
         h264Encoder = H264Encoder()
         webSocketServer = WebSocketServer(port: 7890)
@@ -20,6 +23,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         bonjourAdvertiser = BonjourAdvertiser(port: 7890)
         cloudflareTunnelManager = CloudflareTunnelManager()
         clipboardManager = ClipboardManager()
+        pairingManager = PairingManager()
 
         // Bonjour is started only when the user enables sharing (inside StatusBarController)
         statusBarController = StatusBarController(
@@ -27,7 +31,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             tunnel: cloudflareTunnelManager,
             capture: screenCaptureManager,
             bonjour: bonjourAdvertiser,
-            clipboard: clipboardManager
+            clipboard: clipboardManager,
+            pairing: pairingManager
         )
 
         h264Encoder.delegate = webSocketServer
@@ -35,6 +40,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         webSocketServer.inputDelegate = inputInjector
         webSocketServer.encoder = h264Encoder
         webSocketServer.clipboardDelegate = clipboardManager
+        webSocketServer.pairingManager = pairingManager
         webSocketServer.monitorInfoProvider = { [weak self] in
             self?.screenCaptureManager.currentMonitorInfos() ?? []
         }
@@ -57,6 +63,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        AirDeskDiagnostics.shared.markCleanShutdown()
         screenCaptureManager.stopCapture()
         webSocketServer.stop()
         bonjourAdvertiser.stop()
@@ -208,13 +215,35 @@ private enum InstallReminder {
 
             case .cleanupArchive(let archiveURL):
                 alert.messageText = "Installer Download Can Be Deleted"
-                alert.informativeText = "AirDesk is already installed in Applications. If you don't need the installer anymore, you can delete the downloaded package."
+                alert.informativeText = "AirDesk is already installed in Applications. If you don't need the installer anymore, you can move the downloaded package to Trash."
                 alert.addButton(withTitle: "Show Installer")
+                alert.addButton(withTitle: "Move to Trash")
                 alert.addButton(withTitle: "Later")
 
-                if alert.runModal() == .alertFirstButtonReturn {
+                let response = alert.runModal()
+                if response == .alertFirstButtonReturn {
                     NSWorkspace.shared.activateFileViewerSelecting([archiveURL])
+                } else if response == .alertSecondButtonReturn {
+                    moveInstallerArchiveToTrash(archiveURL)
                 }
+            }
+        }
+    }
+
+    private static func moveInstallerArchiveToTrash(_ archiveURL: URL) {
+        do {
+            try FileManager.default.trashItem(at: archiveURL, resultingItemURL: nil)
+        } catch {
+            print("[AirDesk] Failed to move installer archive to Trash: \(error)")
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Installer Could Not Be Moved to Trash"
+            alert.informativeText = "AirDesk could not move \(archiveURL.lastPathComponent) to Trash. You can delete it manually from Finder."
+            alert.addButton(withTitle: "Show Installer")
+            alert.addButton(withTitle: "OK")
+
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSWorkspace.shared.activateFileViewerSelecting([archiveURL])
             }
         }
     }

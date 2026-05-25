@@ -45,11 +45,21 @@ extension BonjourDiscovery: NetServiceDelegate {
         let resolvedHost = preferredHost(for: sender)
         guard let resolvedHost else { return }
         let host = DiscoveredHost(name: sender.name, host: resolvedHost, port: sender.port)
-
-        if !resolvedHosts.contains(where: { $0.name == host.name }) {
+        if let existingIndex = resolvedHosts.firstIndex(where: { $0.name == host.name }) {
+            let existingHost = resolvedHosts[existingIndex]
+            guard existingHost.host != host.host || existingHost.port != host.port else { return }
+            resolvedHosts[existingIndex] = host
+        } else {
             resolvedHosts.append(host)
-            hostsUpdated?(resolvedHosts)
         }
+
+        resolvedHosts.sort { lhs, rhs in
+            if lhs.name != rhs.name { return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending }
+            if lhs.host != rhs.host { return lhs.host.localizedCaseInsensitiveCompare(rhs.host) == .orderedAscending }
+            return lhs.port < rhs.port
+        }
+        AirDeskDiagnostics.shared.record("Discovered host \(host.name) at \(host.host):\(host.port)")
+        hostsUpdated?(resolvedHosts)
     }
 
     func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
@@ -58,23 +68,68 @@ extension BonjourDiscovery: NetServiceDelegate {
 
     private func preferredHost(for service: NetService) -> String? {
         if let addresses = service.addresses {
-            for address in addresses {
-                if let ip = ipAddress(from: address, family: AF_INET) {
-                    return ip
-                }
+            let ipv4Addresses = addresses.compactMap { ipAddress(from: $0, family: AF_INET) }
+            if let preferredIPv4 = preferredIPv4(from: ipv4Addresses) {
+                return preferredIPv4
             }
-            for address in addresses {
-                if let ip = ipAddress(from: address, family: AF_INET6) {
-                    return ip
-                }
+
+            let ipv6Addresses = addresses.compactMap { ipAddress(from: $0, family: AF_INET6) }
+            if let preferredIPv6 = preferredIPv6(from: ipv6Addresses) {
+                return preferredIPv6
             }
         }
 
-        if let hostName = service.hostName {
-            return hostName.hasSuffix(".") ? String(hostName.dropLast()) : hostName
-        }
+        return normalizedHostName(for: service)
+    }
 
-        return nil
+    private func normalizedHostName(for service: NetService) -> String? {
+        guard let hostName = service.hostName?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !hostName.isEmpty else {
+            return nil
+        }
+        return hostName.hasSuffix(".") ? String(hostName.dropLast()) : hostName
+    }
+
+    private func preferredIPv4(from addresses: [String]) -> String? {
+        let ranked = addresses
+            .map { ($0, scoreIPv4($0)) }
+            .sorted { lhs, rhs in
+                if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
+                return lhs.0 < rhs.0
+            }
+        return ranked.first(where: { $0.1 > 0 })?.0 ?? ranked.first?.0
+    }
+
+    private func preferredIPv6(from addresses: [String]) -> String? {
+        let ranked = addresses
+            .map { ($0, scoreIPv6($0)) }
+            .sorted { lhs, rhs in
+                if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
+                return lhs.0 < rhs.0
+            }
+        return ranked.first(where: { $0.1 > 0 })?.0 ?? ranked.first?.0
+    }
+
+    private func scoreIPv4(_ address: String) -> Int {
+        if address.hasPrefix("127.") { return 0 }
+        if address.hasPrefix("169.254.") { return 1 }
+        if address.hasPrefix("192.168.") { return 5 }
+        if address.hasPrefix("10.") { return 5 }
+        if address.hasPrefix("172.") {
+            let octets = address.split(separator: ".")
+            if octets.count > 1, let second = Int(octets[1]), (16...31).contains(second) {
+                return 5
+            }
+        }
+        return 4
+    }
+
+    private func scoreIPv6(_ address: String) -> Int {
+        let lowercased = address.lowercased()
+        if lowercased == "::1" || lowercased.hasPrefix("0:0:0:0:0:0:0:1") { return 0 }
+        if lowercased.hasPrefix("fe80:") { return 1 }
+        return 3
     }
 
     private func ipAddress(from data: Data, family: Int32) -> String? {

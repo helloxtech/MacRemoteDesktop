@@ -4,17 +4,22 @@ class CloudflareTunnelManager {
 
     private var process: Process?
     var urlHandler: ((String?) -> Void)?
+    var isRunning: Bool {
+        process?.isRunning == true
+    }
 
     private let cloudflaredPaths = [
         "/usr/local/bin/cloudflared",
         "/opt/homebrew/bin/cloudflared"
     ]
 
-    func start(localPort: UInt16 = 7890) {
+    @discardableResult
+    func start(localPort: UInt16 = 7890) -> Bool {
+        guard !isRunning else { return true }
         guard let binaryPath = cloudflaredPaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
             print("cloudflared not found. Install via: brew install cloudflare/cloudflare/cloudflared")
             urlHandler?(nil)
-            return
+            return false
         }
 
         let proc = Process()
@@ -37,9 +42,16 @@ class CloudflareTunnelManager {
             DispatchQueue.main.async { self?.urlHandler?(nil) }
         }
 
-        try? proc.run()
+        do {
+            try proc.run()
+        } catch {
+            print("CloudflareTunnelManager: failed to start cloudflared: \(error)")
+            urlHandler?(nil)
+            return false
+        }
         self.process = proc
         print("CloudflareTunnelManager: started cloudflared")
+        return true
     }
 
     func stop() {

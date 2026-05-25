@@ -31,3 +31,11 @@ cloudflare-credentials.json
 # Node (for wrangler)
 node_modules/
 dist/
+
+# Vendored package extras not needed for AirDesk iOS builds
+Vendor/royalvnc/.github/
+Vendor/royalvnc/.vscode/
+Vendor/royalvnc/Bindings/
+Vendor/royalvnc/Design/
+Vendor/royalvnc/android_build.sh
+Vendor/royalvnc/android_dependencies.sh

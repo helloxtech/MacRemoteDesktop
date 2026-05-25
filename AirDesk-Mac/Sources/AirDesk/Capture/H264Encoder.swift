@@ -25,6 +25,13 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
         }
     }
 
+    /// Force a keyframe only for the requested display stream.
+    func forceKeyframeOnNextFrame(displayIndex: Int) {
+        encoderQueue.async { [weak self] in
+            self?.pendingKeyframe.insert(displayIndex)
+        }
+    }
+
     func didCaptureFrame(_ frame: CVPixelBuffer, displayIndex: Int) {
         encoderQueue.async { [weak self] in
             self?.encodeFrame(frame, displayIndex: displayIndex)
@@ -46,8 +53,7 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
 
     /// Capture the screen directly via Core Graphics and encode immediately.
     /// Bypasses ScreenCaptureKit, so it works even when the screen is static.
-    /// Encodes as a P-frame (not keyframe) to keep frame size small for fast delivery.
-    func captureAndEncodeImmediate(displayIndex: Int) {
+    func captureAndEncodeImmediate(displayIndex: Int, forceKeyframe: Bool = false) {
         encoderQueue.async { [weak self] in
             guard let self else { return }
             var count: UInt32 = 0
@@ -58,6 +64,9 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
             guard displayIndex < sorted.count else { return }
             guard let cgImage = CGDisplayCreateImage(sorted[displayIndex]) else { return }
             guard let pixelBuffer = self.pixelBuffer(from: cgImage) else { return }
+            if forceKeyframe {
+                self.pendingKeyframe.insert(displayIndex)
+            }
             self.encodeFrame(pixelBuffer, displayIndex: displayIndex)
         }
     }
@@ -103,9 +112,8 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
             // CMGetAttachment reads buffer-level and returns nil for this key,
             // so we must use the per-sample array instead.
             let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[CFString: Any]]
-            let dependsOnOthers = attachments?.first?[kCMSampleAttachmentKey_DependsOnOthers] as? Bool ?? false
-            let isActualKeyframe = !dependsOnOthers
-            self?.handleEncodedFrame(sampleBuffer, displayIndex: displayIndex, isKeyframe: isActualKeyframe)
+            let notSync = attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool ?? false
+            self?.handleEncodedFrame(sampleBuffer, displayIndex: displayIndex, keyframeHint: !notSync)
         }
     }
 
@@ -166,17 +174,52 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
 
     private var encodeLogCounter = 0
 
-    private func handleEncodedFrame(_ sampleBuffer: CMSampleBuffer, displayIndex: Int, isKeyframe: Bool) {
+    private func handleEncodedFrame(_ sampleBuffer: CMSampleBuffer, displayIndex: Int, keyframeHint: Bool) {
         guard let dataBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
         encodeLogCounter += 1
         if encodeLogCounter <= 3 || encodeLogCounter % 300 == 0 {
-            print("[AirDesk] Encoded frame #\(encodeLogCounter) display=\(displayIndex) keyframe=\(isKeyframe)")
+            print("[AirDesk] Encoded frame #\(encodeLogCounter) display=\(displayIndex) keyframeHint=\(keyframeHint)")
         }
 
-        var annexBData = Data()
+        var videoAnnexBData = Data()
+        var containsIDR = false
 
-        // Extract SPS and PPS for keyframes
-        if isKeyframe, let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) {
+        // Convert AVCC to Annex B and inspect each NALU. We only advertise a
+        // recovery keyframe when the payload actually contains an IDR slice;
+        // cached P-frames marked as keyframes can leave a reconnecting decoder black.
+        let totalLength = CMBlockBufferGetDataLength(dataBuffer)
+        videoAnnexBData.reserveCapacity(totalLength + 16)
+
+        var dataPointer: UnsafeMutablePointer<Int8>?
+        var lengthAtOffset = 0
+        var totalLengthOut = 0
+        guard CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0, lengthAtOffsetOut: &lengthAtOffset,
+                                          totalLengthOut: &totalLengthOut, dataPointerOut: &dataPointer) == noErr,
+              let rawPtr = dataPointer else { return }
+
+        var offset = 0
+        while offset < totalLengthOut - 4 {
+            let p = rawPtr.advanced(by: offset)
+            let naluLength = Int(UInt8(bitPattern: p[0])) << 24 | Int(UInt8(bitPattern: p[1])) << 16 |
+                             Int(UInt8(bitPattern: p[2])) << 8  | Int(UInt8(bitPattern: p[3]))
+            guard naluLength > 0, offset + 4 + naluLength <= totalLengthOut else { break }
+            let naluStart = p.advanced(by: 4)
+            let naluType = UInt8(bitPattern: naluStart.pointee) & 0x1F
+            if naluType == 5 {
+                containsIDR = true
+            }
+            videoAnnexBData.append(contentsOf: [0, 0, 0, 1])
+            videoAnnexBData.append(UnsafeBufferPointer(start: UnsafeRawPointer(naluStart).assumingMemoryBound(to: UInt8.self),
+                                                       count: naluLength))
+            offset += 4 + naluLength
+        }
+        guard !videoAnnexBData.isEmpty else { return }
+
+        let isRecoveryKeyframe = containsIDR
+        var annexBData = Data(capacity: videoAnnexBData.count + 128)
+
+        // Extract SPS and PPS for recovery keyframes.
+        if isRecoveryKeyframe, let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) {
             var parameterSetCount = 0
             CMVideoFormatDescriptionGetH264ParameterSetAtIndex(formatDesc, parameterSetIndex: 0, parameterSetPointerOut: nil, parameterSetSizeOut: nil, parameterSetCountOut: &parameterSetCount, nalUnitHeaderLengthOut: nil)
 
@@ -191,30 +234,10 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
             }
         }
 
-        // Convert AVCC to Annex B — zero-copy via CMBlockBuffer pointer
-        let totalLength = CMBlockBufferGetDataLength(dataBuffer)
-        annexBData.reserveCapacity(annexBData.count + totalLength + 16)
-
-        var dataPointer: UnsafeMutablePointer<Int8>?
-        var lengthAtOffset = 0
-        var totalLengthOut = 0
-        guard CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0, lengthAtOffsetOut: &lengthAtOffset,
-                                          totalLengthOut: &totalLengthOut, dataPointerOut: &dataPointer) == noErr,
-              let rawPtr = dataPointer else { return }
-
-        var offset = 0
-        while offset < totalLengthOut - 4 {
-            let p = rawPtr.advanced(by: offset)
-            let naluLength = Int(UInt8(bitPattern: p[0])) << 24 | Int(UInt8(bitPattern: p[1])) << 16 |
-                             Int(UInt8(bitPattern: p[2])) << 8  | Int(UInt8(bitPattern: p[3]))
-            annexBData.append(contentsOf: [0, 0, 0, 1])
-            annexBData.append(UnsafeBufferPointer(start: UnsafeRawPointer(p.advanced(by: 4)).assumingMemoryBound(to: UInt8.self),
-                                                  count: naluLength))
-            offset += 4 + naluLength
-        }
+        annexBData.append(videoAnnexBData)
 
         let timestamp = CACurrentMediaTime()
-        delegate?.didEncodeFrame(annexBData, isKeyframe: isKeyframe, displayIndex: displayIndex, timestamp: timestamp)
+        delegate?.didEncodeFrame(annexBData, isKeyframe: isRecoveryKeyframe, displayIndex: displayIndex, timestamp: timestamp)
     }
 
     deinit {

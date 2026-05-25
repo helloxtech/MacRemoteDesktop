@@ -1,15 +1,20 @@
 import SwiftUI
 import UIKit
 import MetalKit
+import AirDeskProtocol
 
 struct MonitorView: UIViewControllerRepresentable {
 
     let monitor: MonitorInfo
     let displayIndex: Int
+    let controlMode: RemoteControlMode
+    let inputEnabled: Bool
     @EnvironmentObject var appState: AppState
 
     func makeUIViewController(context: Context) -> MonitorViewController {
         let vc = MonitorViewController(monitor: monitor, displayIndex: displayIndex)
+        vc.setControlMode(controlMode)
+        vc.setInputEnabled(inputEnabled)
         if let client = appState.webSocketClient {
             vc.configure(client: client)
         }
@@ -29,12 +34,12 @@ struct MonitorView: UIViewControllerRepresentable {
         if let client = appState.webSocketClient {
             vc.configure(client: client)
         }
+        vc.setControlMode(controlMode)
+        vc.setInputEnabled(inputEnabled)
     }
 }
 
 class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
-    private static let minimumDisplayScale: CGFloat = 0.5
-
     private let monitor: MonitorInfo
     private let displayIndex: Int
     private var mtkView: MTKView!
@@ -43,25 +48,17 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
     private var inputMapper: TouchInputMapper?
     private var webSocketClient: WebSocketClient?
     private var scale: CGFloat = 1.0
-    private var displayScale: CGFloat = 1.0
     private var viewport: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+    private var canvasOffset: CGPoint = .zero
     private var pinchStartScale: CGFloat = 1.0
-    private var pinchStartDisplayScale: CGFloat = 1.0
-    private var pinchStartViewport: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)
     private var isPinching = false
-    private enum DragAxis { case undecided, vertical, horizontal }
-    private var dragAxis: DragAxis = .undecided
-    private var dragAccumulator: CGPoint = .zero
-    // Zoom-scroll probe: detect if Mac page is scrollable
-    private enum ZoomDragMode { case probing, scrolling, panning }
-    private var zoomDragMode: ZoomDragMode = .probing
-    private var probeStartTime: CFAbsoluteTime = 0
-    private var probeStartFrameTime: CFAbsoluteTime = 0
-    private var probePendingPan: CGFloat = 0  // accumulated Y delta during probe
+    private var singleFingerScrollActive = false
+    private var twoFingerScrollActive = false
+    private var controlMode: RemoteControlMode = .touch
+    private var inputEnabled = true
     private var refreshTimer: Timer?
     private var lastFrameTime: CFAbsoluteTime = 0
     private var hasInitializedViewport = false
-    private var hasUserZoomedViewport = false
 
     init(monitor: MonitorInfo, displayIndex: Int) {
         self.monitor = monitor
@@ -78,13 +75,6 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         view.backgroundColor = .black
         setupMetalView()
         setupGestures()
-
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(keyboardWillChangeFrame(_:)),
-            name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(keyboardWillHide(_:)),
-            name: UIResponder.keyboardWillHideNotification, object: nil)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -103,23 +93,20 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         }
         applyViewport()
         updateDisplayTransform()
-        webSocketClient?.requestStream(displayIndex: displayIndex)
-        startRefreshTimer()
+        startInitialFrameTimer()
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let viewSize = mtkViewSize == .zero ? view.bounds.size : mtkViewSize
         guard viewSize.width > 0, viewSize.height > 0 else { return }
-        if !hasInitializedViewport || (!hasUserZoomedViewport && displayScale >= 0.999) {
-            viewport = baseViewportRect(for: viewSize)
+        if !hasInitializedViewport {
+            viewport = CGRect(x: 0, y: 0, width: 1, height: 1)
+            canvasOffset = .zero
+            scale = 1.0
             hasInitializedViewport = true
-        } else {
-            let center = CGPoint(x: viewport.midX, y: viewport.midY)
-            let targetScale = hasUserZoomedViewport ? max(scale, 1.001) : 1.0
-            let size = viewportSize(for: targetScale, viewSize: viewSize)
-            viewport = clampedViewport(center: center, size: size)
         }
+        clampCanvasOffset(viewSize: viewSize)
         applyViewport()
         updateDisplayTransform()
     }
@@ -135,17 +122,16 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         mtkView.delegate = nil
     }
 
-    /// Periodically requests a fresh stream if no frames arrived recently.
-    /// This recovers from ScreenCaptureKit going idle on a static screen
-    /// and from decoder desync (lost keyframe / corrupted P-frame chain).
-    private func startRefreshTimer() {
+    /// Requests one extra stream only if the view appears and no frame arrives.
+    /// A static Mac screen is valid; repeated forced captures on static content
+    /// create visible flashes because immediate captures differ from SCK frames.
+    private func startInitialFrameTimer() {
         refreshTimer?.invalidate()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        lastFrameTime = CFAbsoluteTimeGetCurrent()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
             guard let self else { return }
             let elapsed = CFAbsoluteTimeGetCurrent() - self.lastFrameTime
-            // If no frame for >2s, request a fresh keyframe and force a redraw
-            // so the screen recovers from any stale/black state.
-            if elapsed > 2.0 {
+            if elapsed > 2.8 {
                 self.webSocketClient?.requestStream(displayIndex: self.displayIndex)
                 self.mtkView.setNeedsDisplay()
             }
@@ -196,6 +182,7 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         doubleTap.numberOfTapsRequired = 2
         doubleTap.delegate = self
         view.addGestureRecognizer(doubleTap)
+        tap.require(toFail: doubleTap)
 
         // Two-finger tap = right click
         let twoFingerTap = UITapGestureRecognizer(target: self, action: #selector(handleTwoFingerTap(_:)))
@@ -209,10 +196,8 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         longPress.delegate = self
         view.addGestureRecognizer(longPress)
 
-        // Single-finger drag = scroll / pan
-        // No require(toFail: tap) — pan starts immediately when finger moves.
-        // Tap vs drag is distinguished by the gesture system's built-in movement
-        // threshold: small movement → tap fires, larger movement → pan fires.
+        // Control mode: one-finger drag moves the local desktop canvas.
+        // Scroll mode: one-finger drag sends a wheel scroll to the Mac.
         let drag = UIPanGestureRecognizer(target: self, action: #selector(handleDrag(_:)))
         drag.maximumNumberOfTouches = 1
         drag.delegate = self
@@ -238,14 +223,14 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
                            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         // Allow multiple taps simultaneously (single tap + double tap)
         if gestureRecognizer is UITapGestureRecognizer && otherGestureRecognizer is UITapGestureRecognizer {
-            return true
+            return false
         }
         // Allow pinch alongside pan so pinch isn't cancelled
         if gestureRecognizer is UIPinchGestureRecognizer || otherGestureRecognizer is UIPinchGestureRecognizer {
             return true
         }
         // Tap + Pan must NOT fire simultaneously — otherwise taps fire during
-        // scrolling which sends unwanted clicks and causes view instability.
+        // canvas movement or scrolling and send unwanted clicks.
         return false
     }
 
@@ -259,6 +244,23 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
             self.inputMapper = mapper
         }
         inputMapper?.setViewport(viewport)
+    }
+
+    func setControlMode(_ mode: RemoteControlMode) {
+        guard controlMode != mode else { return }
+        controlMode = mode
+        singleFingerScrollActive = false
+        twoFingerScrollActive = false
+        inputMapper?.endScroll()
+    }
+
+    func setInputEnabled(_ enabled: Bool) {
+        if !enabled {
+            singleFingerScrollActive = false
+            twoFingerScrollActive = false
+            inputMapper?.endScroll()
+        }
+        inputEnabled = enabled
     }
 
     /// Thread-safe: can be called from any thread (decoder callback, main thread).
@@ -283,9 +285,9 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
     /// Toggle between 1x (fit) and 2x (readable text) zoom.
     func toggleZoom() {
         if scale > 1.1 {
-            zoom(to: 1.0)
+            zoomCanvas(to: 1.0, around: CGPoint(x: view.bounds.midX, y: view.bounds.midY))
         } else {
-            zoom(to: 2.0)
+            zoomCanvas(to: 2.0, around: CGPoint(x: view.bounds.midX, y: view.bounds.midY))
         }
     }
 
@@ -306,64 +308,11 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         effectivePresentation(for: viewSize).displayRect
     }
 
-    private func baseViewportSize(for viewSize: CGSize) -> CGSize {
-        let monitorAspect = CGFloat(max(monitor.width, 1)) / CGFloat(max(monitor.height, 1))
-        let viewAspect = max(viewSize.width, 1) / max(viewSize.height, 1)
-        let ratio = viewAspect / monitorAspect
-        if ratio >= 1 {
-            return CGSize(width: 1, height: 1 / ratio)
-        } else {
-            return CGSize(width: ratio, height: 1)
-        }
-    }
-
-    private func baseViewportRect(for viewSize: CGSize) -> CGRect {
-        let size = baseViewportSize(for: viewSize)
-        return CGRect(
-            x: (1 - size.width) / 2,
-            y: (1 - size.height) / 2,
-            width: size.width,
-            height: size.height
-        )
-    }
-
-    private func viewportSize(for targetScale: CGFloat, viewSize overrideViewSize: CGSize? = nil) -> CGSize {
-        let clampedScale = max(1.0, min(4.0, targetScale))
-        let currentViewSize = overrideViewSize ?? (mtkViewSize == .zero ? view.bounds.size : mtkViewSize)
-        let baseSize = baseViewportSize(for: currentViewSize)
-        return CGSize(width: baseSize.width / clampedScale, height: baseSize.height / clampedScale)
-    }
-
-    private func displayScaleViewportSize(for displayScale: CGFloat, viewSize: CGSize) -> CGSize {
-        let fillViewport = baseViewportRect(for: viewSize)
-        let t = max(0, min(1, (displayScale - Self.minimumDisplayScale) / (1 - Self.minimumDisplayScale)))
-        return CGSize(
-            width: 1 + (fillViewport.width - 1) * t,
-            height: 1 + (fillViewport.height - 1) * t
-        )
-    }
-
-    private func activeViewport(for viewSize: CGSize) -> CGRect {
-        if displayScale < 0.999 {
-            let size = displayScaleViewportSize(for: displayScale, viewSize: viewSize)
-            return clampedViewport(center: CGPoint(x: viewport.midX, y: viewport.midY), size: size)
-        }
-        return clampedViewport(center: CGPoint(x: viewport.midX, y: viewport.midY), size: viewport.size)
-    }
-
-    private func clampedViewport(center: CGPoint, size: CGSize) -> CGRect {
-        let width = max(0.08, min(1.0, size.width))
-        let height = max(0.08, min(1.0, size.height))
-        let originX = min(max(0, center.x - width / 2), 1 - width)
-        let originY = min(max(0, center.y - height / 2), 1 - height)
-        return CGRect(x: originX, y: originY, width: width, height: height)
-    }
-
     private func applyViewport() {
         let currentViewSize = mtkViewSize == .zero ? view.bounds.size : mtkViewSize
-        let baseSize = baseViewportSize(for: currentViewSize)
-        viewport = activeViewport(for: currentViewSize)
-        scale = max(1.0, min(4.0, max(baseSize.width / max(viewport.width, 0.0001), baseSize.height / max(viewport.height, 0.0001))))
+        viewport = CGRect(x: 0, y: 0, width: 1, height: 1)
+        scale = max(0.7, min(5.0, scale))
+        clampCanvasOffset(viewSize: currentViewSize)
         applyPresentation(viewSize: currentViewSize)
     }
 
@@ -385,20 +334,27 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     private func effectivePresentation(for viewSize: CGSize) -> (viewport: CGRect, displayRect: CGRect) {
-        let fullRect = CGRect(origin: .zero, size: viewSize)
         guard viewSize.width > 0, viewSize.height > 0 else {
-            return (viewport, fullRect)
+            return (viewport, CGRect(origin: .zero, size: viewSize))
         }
-        guard displayScale < 0.999 else {
-            return (viewport, fullRect)
-        }
-
-        let scaledViewport = activeViewport(for: viewSize)
-        let monitorAspect = CGFloat(max(monitor.width, 1)) / CGFloat(max(monitor.height, 1))
-        let contentAspect = monitorAspect * scaledViewport.width / scaledViewport.height
         return (
-            scaledViewport,
-            aspectFitRect(for: viewSize, contentAspect: contentAspect)
+            CGRect(x: 0, y: 0, width: 1, height: 1),
+            canvasDisplayRect(for: viewSize)
+        )
+    }
+
+    private func canvasDisplayRect(for viewSize: CGSize) -> CGRect {
+        let base = aspectFitRect(for: viewSize)
+        let size = CGSize(width: base.width * scale, height: base.height * scale)
+        let center = CGPoint(
+            x: viewSize.width / 2 + canvasOffset.x,
+            y: viewSize.height / 2 + canvasOffset.y
+        )
+        return CGRect(
+            x: center.x - size.width / 2,
+            y: center.y - size.height / 2,
+            width: size.width,
+            height: size.height
         )
     }
 
@@ -419,15 +375,6 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         }
     }
 
-    private func interpolate(from start: CGRect, to end: CGRect, t: CGFloat) -> CGRect {
-        CGRect(
-            x: start.origin.x + (end.origin.x - start.origin.x) * t,
-            y: start.origin.y + (end.origin.y - start.origin.y) * t,
-            width: start.size.width + (end.size.width - start.size.width) * t,
-            height: start.size.height + (end.size.height - start.size.height) * t
-        )
-    }
-
     private func normalizedRect(_ rect: CGRect, in viewSize: CGSize) -> CGRect {
         guard viewSize.width > 0, viewSize.height > 0 else {
             return CGRect(x: 0, y: 0, width: 1, height: 1)
@@ -440,57 +387,52 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         )
     }
 
-    private func normalizedContentPoint(from pointInView: CGPoint) -> CGPoint? {
-        let point = touchPointInMTKView(pointInView)
-        let rect = contentRect(in: mtkViewSize)
-        guard rect.width > 0, rect.height > 0, rect.contains(point) else { return nil }
-        return CGPoint(
-            x: max(0, min(1, (point.x - rect.minX) / rect.width)),
-            y: max(0, min(1, (point.y - rect.minY) / rect.height))
+    private func zoomCanvas(to newScale: CGFloat, around pointInView: CGPoint) {
+        let viewSize = mtkViewSize == .zero ? view.bounds.size : mtkViewSize
+        guard viewSize.width > 0, viewSize.height > 0 else { return }
+        let currentRect = canvasDisplayRect(for: viewSize)
+        guard currentRect.width > 0, currentRect.height > 0 else { return }
+
+        let anchor = CGPoint(
+            x: max(0, min(1, (pointInView.x - currentRect.minX) / currentRect.width)),
+            y: max(0, min(1, (pointInView.y - currentRect.minY) / currentRect.height))
         )
+        let clampedScale = max(0.7, min(5.0, newScale))
+        let baseRect = aspectFitRect(for: viewSize)
+        let newSize = CGSize(width: baseRect.width * clampedScale, height: baseRect.height * clampedScale)
+        let newOrigin = CGPoint(
+            x: pointInView.x - anchor.x * newSize.width,
+            y: pointInView.y - anchor.y * newSize.height
+        )
+        scale = clampedScale
+        canvasOffset = CGPoint(
+            x: newOrigin.x + newSize.width / 2 - viewSize.width / 2,
+            y: newOrigin.y + newSize.height / 2 - viewSize.height / 2
+        )
+        clampCanvasOffset(viewSize: viewSize)
+        applyPresentation(viewSize: viewSize)
     }
 
-    private func zoom(to newScale: CGFloat, around pointInView: CGPoint? = nil, from baseViewport: CGRect? = nil) {
-        let clampedScale = max(1.0, min(4.0, newScale))
-        let sourceViewport = baseViewport ?? viewport
-
-        guard clampedScale > 1.001 else {
-            hasUserZoomedViewport = false
-            viewport = baseViewportRect(for: mtkViewSize == .zero ? view.bounds.size : mtkViewSize)
-            applyViewport()
-            return
-        }
-
-        hasUserZoomedViewport = true
-        let targetSize = viewportSize(for: clampedScale)
-        let anchor = pointInView.flatMap(normalizedContentPoint(from:)) ?? CGPoint(x: 0.5, y: 0.5)
-        let sourcePoint = CGPoint(
-            x: sourceViewport.origin.x + anchor.x * sourceViewport.width,
-            y: sourceViewport.origin.y + anchor.y * sourceViewport.height
-        )
-
-        viewport = clampedViewport(
-            center: CGPoint(
-                x: sourcePoint.x + (0.5 - anchor.x) * targetSize.width,
-                y: sourcePoint.y + (0.5 - anchor.y) * targetSize.height
-            ),
-            size: targetSize
-        )
-        applyViewport()
+    private func panCanvas(by delta: CGPoint) {
+        let viewSize = mtkViewSize == .zero ? view.bounds.size : mtkViewSize
+        guard viewSize.width > 0, viewSize.height > 0 else { return }
+        canvasOffset.x += delta.x
+        canvasOffset.y += delta.y
+        clampCanvasOffset(viewSize: viewSize)
+        applyPresentation(viewSize: viewSize)
     }
 
-    private func panViewport(by delta: CGPoint) {
-        guard hasUserZoomedViewport || displayScale < 0.999 else { return }
-        let rect = contentRect(in: mtkViewSize)
-        guard rect.width > 0, rect.height > 0 else { return }
-        let sourceViewport = activeViewport(for: mtkViewSize)
-
-        let center = CGPoint(
-            x: sourceViewport.midX - (delta.x / rect.width) * sourceViewport.width,
-            y: sourceViewport.midY - (delta.y / rect.height) * sourceViewport.height
-        )
-        viewport = clampedViewport(center: center, size: sourceViewport.size)
-        applyViewport()
+    private func clampCanvasOffset(viewSize: CGSize) {
+        guard viewSize.width > 0, viewSize.height > 0 else { return }
+        let base = aspectFitRect(for: viewSize)
+        let width = base.width * scale
+        let height = base.height * scale
+        let minVisibleX = min(96, max(44, min(width, viewSize.width) * 0.35))
+        let minVisibleY = min(96, max(44, min(height, viewSize.height) * 0.35))
+        let maxX = max(0, (width + viewSize.width) / 2 - minVisibleX)
+        let maxY = max(0, (height + viewSize.height) / 2 - minVisibleY)
+        canvasOffset.x = max(-maxX, min(maxX, canvasOffset.x))
+        canvasOffset.y = max(-maxY, min(maxY, canvasOffset.y))
     }
 
     private func isInContent(_ point: CGPoint) -> Bool {
@@ -500,6 +442,7 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     @objc private func handleTap(_ gr: UITapGestureRecognizer) {
+        guard inputEnabled else { return }
         ensureMapper()
         let point = gr.location(in: view)
         NSLog("[AirDesk] tap at (%.0f, %.0f) inContent=%d mapper=%d client=%d",
@@ -511,6 +454,7 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     @objc private func handleDoubleTap(_ gr: UITapGestureRecognizer) {
+        guard inputEnabled else { return }
         ensureMapper()
         let point = gr.location(in: view)
         guard isInContent(point) else { return }
@@ -519,6 +463,7 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     @objc private func handleTwoFingerTap(_ gr: UITapGestureRecognizer) {
+        guard inputEnabled else { return }
         ensureMapper()
         let point = gr.location(in: view)
         guard isInContent(point) else { return }
@@ -529,6 +474,7 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
 
     @objc private func handleLongPress(_ gr: UILongPressGestureRecognizer) {
         guard gr.state == .began else { return }
+        guard inputEnabled else { return }
         ensureMapper()
         let point = gr.location(in: view)
         guard isInContent(point) else { return }
@@ -537,126 +483,117 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
-    private var isZoomed: Bool { hasUserZoomedViewport || abs(displayScale - 1.0) > 0.01 }
-
     @objc private func handleDrag(_ gr: UIPanGestureRecognizer) {
+        switch controlMode {
+        case .touch:
+            handleViewportPan(gr)
+        case .scroll:
+            handleSingleFingerScroll(gr)
+        }
+    }
+
+    private func handleDirectMouseDrag(_ gr: UIPanGestureRecognizer) {
+        guard inputEnabled else { return }
+        guard !isPinching else { return }
+        ensureMapper()
+        let point = gr.location(in: view)
+        let p = touchPointInMTKView(point)
+
         switch gr.state {
         case .began:
-            dragAxis = .undecided
-            dragAccumulator = .zero
-            zoomDragMode = .probing
-            probeStartTime = CFAbsoluteTimeGetCurrent()
-            probeStartFrameTime = lastFrameTime
-            probePendingPan = 0
-            ensureMapper()
-            // Always move cursor to finger position at drag start — both zoomed
-            // and unzoomed — so scroll events target the correct Mac window/area
-            // without requiring a separate tap first.
-            let point = gr.location(in: view)
-            if isInContent(point) {
-                let p = touchPointInMTKView(point)
-                inputMapper?.handleMove(at: p, in: mtkViewSize)
-            }
+            guard isInContent(point) else { return }
+            inputMapper?.handleDragBegan(at: p, in: mtkViewSize)
         case .changed:
-            guard !isPinching else { return }
-            let delta = gr.translation(in: view)
-            gr.setTranslation(.zero, in: view)
-
-            // Axis-lock first — same logic whether zoomed or not
-            if dragAxis == .undecided {
-                dragAccumulator.x += delta.x
-                dragAccumulator.y += delta.y
-                let threshold: CGFloat = 8
-                if abs(dragAccumulator.y) > threshold {
-                    dragAxis = .vertical
-                } else if abs(dragAccumulator.x) > threshold {
-                    dragAxis = .horizontal
-                } else {
-                    return
-                }
-            }
-
-            if hasUserZoomedViewport || displayScale < 0.999 {
-                switch dragAxis {
-                case .vertical:
-                    handleZoomedVerticalDrag(deltaY: delta.y, gr: gr)
-                case .horizontal:
-                    panViewport(by: CGPoint(x: delta.x, y: 0))
-                case .undecided:
-                    break
-                }
-                return
-            }
-
-            switch dragAxis {
-            case .vertical:
-                let point = gr.location(in: view)
-                let p = touchPointInMTKView(point)
-                inputMapper?.handleScroll(deltaX: 0, deltaY: delta.y / scale, at: p, in: mtkViewSize)
-            case .horizontal:
-                panViewport(by: CGPoint(x: delta.x, y: 0))
-            case .undecided:
-                break
-            }
+            inputMapper?.handleDragChanged(to: p, in: mtkViewSize)
         case .ended, .cancelled:
-            dragAxis = .undecided
-            zoomDragMode = .probing
-            snapBackIfNeeded()
+            inputMapper?.handleDragEnded(at: p, in: mtkViewSize)
         default:
             break
         }
     }
 
-    /// When zoomed, handle vertical drag with auto-detection:
-    /// First send scroll to Mac. If a new frame arrives (page scrolled), keep scrolling.
-    /// If no new frame after ~150ms, switch to panning the view.
-    private func handleZoomedVerticalDrag(deltaY: CGFloat, gr: UIPanGestureRecognizer) {
-        switch zoomDragMode {
-        case .probing:
-            // Send scroll to Mac while probing
+    private func handleSingleFingerScroll(_ gr: UIPanGestureRecognizer) {
+        guard inputEnabled else {
+            singleFingerScrollActive = false
+            inputMapper?.endScroll()
+            return
+        }
+
+        switch gr.state {
+        case .began:
+            ensureMapper()
+            let point = gr.location(in: view)
+            guard isInContent(point) else {
+                singleFingerScrollActive = false
+                return
+            }
+            singleFingerScrollActive = true
+            inputMapper?.beginScroll()
+            let p = touchPointInMTKView(point)
+            inputMapper?.handleMove(at: p, in: mtkViewSize)
+            gr.setTranslation(.zero, in: view)
+        case .changed:
+            guard singleFingerScrollActive, !isPinching else { return }
+            let delta = gr.translation(in: view)
+            gr.setTranslation(.zero, in: view)
             let point = gr.location(in: view)
             let p = touchPointInMTKView(point)
-            inputMapper?.handleScroll(deltaX: 0, deltaY: deltaY / scale, at: p, in: mtkViewSize)
-            probePendingPan += deltaY
+            inputMapper?.handleScroll(deltaX: delta.x, deltaY: delta.y, at: p, in: mtkViewSize)
+        case .ended, .cancelled, .failed:
+            singleFingerScrollActive = false
+            inputMapper?.endScroll()
+        default:
+            break
+        }
+    }
 
-            let elapsed = CFAbsoluteTimeGetCurrent() - probeStartTime
-                if elapsed > 0.10 {
-                    // Probe period over — did the screen change?
-                    if lastFrameTime > probeStartFrameTime {
-                        // New frame arrived → page IS scrollable
-                        zoomDragMode = .scrolling
-                    } else {
-                        // No new frame → page can't scroll, switch to pan
-                        zoomDragMode = .panning
-                        // Apply the accumulated Y movement as pan
-                        panViewport(by: CGPoint(x: 0, y: probePendingPan))
-                    }
-                }
-            case .scrolling:
-                // Page is scrollable — keep sending scroll to Mac
-                let point = gr.location(in: view)
-                let p = touchPointInMTKView(point)
-                inputMapper?.handleScroll(deltaX: 0, deltaY: deltaY / scale, at: p, in: mtkViewSize)
-            case .panning:
-                // Page can't scroll — pan the view
-                panViewport(by: CGPoint(x: 0, y: deltaY))
+    private func handleViewportPan(_ gr: UIPanGestureRecognizer) {
+        guard !isPinching else { return }
+        switch gr.state {
+        case .began:
+            gr.setTranslation(.zero, in: view)
+        case .changed:
+            let delta = gr.translation(in: view)
+            gr.setTranslation(.zero, in: view)
+            panCanvas(by: delta)
+        default:
+            break
         }
     }
 
     @objc private func handleScroll(_ gr: UIPanGestureRecognizer) {
-        if gr.state == .began {
+        guard inputEnabled else {
+            twoFingerScrollActive = false
+            inputMapper?.endScroll()
+            return
+        }
+
+        switch gr.state {
+        case .began:
             ensureMapper()
             let point = gr.location(in: view)
+            guard isInContent(point) else {
+                twoFingerScrollActive = false
+                return
+            }
+            twoFingerScrollActive = true
+            inputMapper?.beginScroll()
             let p = touchPointInMTKView(point)
             inputMapper?.handleMove(at: p, in: mtkViewSize)
+            gr.setTranslation(.zero, in: view)
+        case .changed:
+            guard twoFingerScrollActive, !isPinching else { return }
+            let delta = gr.translation(in: view)
+            gr.setTranslation(.zero, in: view)
+            let point = gr.location(in: view)
+            let p = touchPointInMTKView(point)
+            inputMapper?.handleScroll(deltaX: delta.x, deltaY: delta.y, at: p, in: mtkViewSize)
+        case .ended, .cancelled, .failed:
+            twoFingerScrollActive = false
+            inputMapper?.endScroll()
+        default:
+            break
         }
-        guard gr.state == .changed else { return }
-        guard !isPinching else { return }
-        let delta = gr.translation(in: view)
-        gr.setTranslation(.zero, in: view)
-        let point = gr.location(in: view)
-        let p = touchPointInMTKView(point)
-        inputMapper?.handleScroll(deltaX: delta.x / scale, deltaY: delta.y / scale, at: p, in: mtkViewSize)
     }
 
     @objc private func handlePinch(_ gr: UIPinchGestureRecognizer) {
@@ -664,50 +601,16 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         case .began:
             isPinching = true
             pinchStartScale = scale
-            pinchStartDisplayScale = displayScale
-            pinchStartViewport = viewport
         case .changed:
-            let start = pinchStartDisplayScale < 0.999 ? pinchStartDisplayScale : pinchStartScale
-            let target = max(Self.minimumDisplayScale, min(4.0, start * gr.scale))
-            if target < 1.0 {
-                if scale > 1.001 {
-                    zoom(to: 1.0)
-                }
-                displayScale = target
-                updateDisplayTransform()
-            } else {
-                if displayScale < 0.999 {
-                    displayScale = 1.0
-                    updateDisplayTransform()
-                }
-                zoom(to: target, around: gr.location(in: view), from: pinchStartViewport)
-            }
+            let target = max(0.7, min(5.0, pinchStartScale * gr.scale))
+            zoomCanvas(to: target, around: gr.location(in: view))
         case .ended, .cancelled:
             isPinching = false
-            if displayScale < 1.0 {
-                if displayScale > 0.995 {
-                    displayScale = 1.0
-                    updateDisplayTransform()
-                }
-            } else if scale < 1.0005 {
-                zoom(to: 1.0)
+            if abs(scale - 1.0) < 0.015 {
+                zoomCanvas(to: 1.0, around: CGPoint(x: view.bounds.midX, y: view.bounds.midY))
             }
         default: break
         }
-    }
-
-    /// Animate back to center when at 1x and panned off.
-    private func snapBackIfNeeded() {
-        if !isZoomed {
-            let currentViewSize = mtkViewSize == .zero ? view.bounds.size : mtkViewSize
-            hasUserZoomedViewport = false
-            viewport = baseViewportRect(for: currentViewSize)
-            applyViewport()
-        }
-    }
-
-    private func resetViewTransform() {
-        zoom(to: 1.0)
     }
 
     // MARK: - Keyboard Avoidance
@@ -743,6 +646,7 @@ class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
     // MTKView has 3 drawables; capping at 2 in-flight guarantees one is always free.
     private var inflightCount = 0
     private let maxInflight = 2
+    private var needsDeferredDraw = false
 
     init?(device: MTLDevice, mtkView: MTKView) {
         guard let queue = device.makeCommandQueue() else { return nil }
@@ -805,7 +709,10 @@ class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
     func draw(in view: MTKView) {
         // Skip if GPU already has maxInflight frames queued — prevents
         // view.currentDrawable from blocking the main thread (which causes freeze).
-        guard inflightCount < maxInflight else { return }
+        guard inflightCount < maxInflight else {
+            needsDeferredDraw = true
+            return
+        }
 
         lock.lock()
         let pb = currentPixelBuffer
@@ -821,7 +728,7 @@ class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
 
         guard let drawable = view.currentDrawable,
               let cb = commandQueue.makeCommandBuffer() else {
-            inflightCount -= 1
+            finishInflightDraw(on: view)
             return
         }
 
@@ -832,7 +739,7 @@ class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
             nil, textureCache, pb, nil, .bgra8Unorm, w, h, 0, &cvTex)
         guard status == kCVReturnSuccess, let cvTex = cvTex,
               let texture = CVMetalTextureGetTexture(cvTex) else {
-            inflightCount -= 1
+            finishInflightDraw(on: view)
             return
         }
 
@@ -856,7 +763,7 @@ class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
         pass.colorAttachments[0].storeAction = .store
 
         guard let enc = cb.makeRenderCommandEncoder(descriptor: pass) else {
-            inflightCount -= 1
+            finishInflightDraw(on: view)
             return
         }
         enc.setRenderPipelineState(pipelineState)
@@ -870,9 +777,19 @@ class MetalVideoRendererObjC: NSObject, MTKViewDelegate {
         // Also decrement inflightCount on main thread so draw() can accept new work.
         cb.addCompletedHandler { [weak self] _ in
             _ = cvTex
-            DispatchQueue.main.async { self?.inflightCount -= 1 }
+            DispatchQueue.main.async { [weak view] in
+                guard let self else { return }
+                self.finishInflightDraw(on: view)
+            }
         }
         cb.present(drawable)
         cb.commit()
+    }
+
+    private func finishInflightDraw(on view: MTKView?) {
+        inflightCount = max(0, inflightCount - 1)
+        guard needsDeferredDraw else { return }
+        needsDeferredDraw = false
+        view?.setNeedsDisplay()
     }
 }

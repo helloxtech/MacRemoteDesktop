@@ -8,8 +8,10 @@ APP_PATH="$ROOT/dist/$APP_NAME.app"
 DMG_PATH="$ROOT/dist/$APP_NAME.dmg"
 ZIP_PATH="$ROOT/dist/$APP_NAME.zip"
 NOTARY_ZIP_PATH="$ROOT/dist/$APP_NAME-notary.zip"
+SPARKLE_SIGNATURE_PATH="$ROOT/dist/$APP_NAME.sparkle-signature.txt"
 STAGING="$ROOT/dist/dmg-staging"
 IDENTITY="${DEVELOPER_ID_APPLICATION:-}"
+SPARKLE_ED_KEY_FILE="${SPARKLE_ED_KEY_FILE:-}"
 NOTARY_ARGS=()
 
 if [[ -n "${APPLE_ID:-}" && -n "${APP_SPECIFIC_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]]; then
@@ -66,6 +68,22 @@ fi
 
 echo "== Create ZIP and DMG =="
 ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
+rm -f "$SPARKLE_SIGNATURE_PATH"
+if [[ -n "$SPARKLE_ED_KEY_FILE" ]]; then
+  if [[ ! -f "$SPARKLE_ED_KEY_FILE" ]]; then
+    echo "Sparkle key file not found: $SPARKLE_ED_KEY_FILE" >&2
+    exit 1
+  fi
+  SIGN_UPDATE="$ROOT/build/AirDesk-Mac/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update"
+  if [[ ! -x "$SIGN_UPDATE" ]]; then
+    echo "Sparkle sign_update tool not found: $SIGN_UPDATE" >&2
+    exit 1
+  fi
+  echo "== Generate Sparkle update signature =="
+  "$SIGN_UPDATE" --ed-key-file "$SPARKLE_ED_KEY_FILE" "$ZIP_PATH" | tee "$SPARKLE_SIGNATURE_PATH"
+else
+  echo "== Sparkle signature skipped: set SPARKLE_ED_KEY_FILE for official appcast signing =="
+fi
 mkdir -p "$STAGING"
 ditto "$APP_PATH" "$STAGING/$APP_NAME.app"
 ln -s /Applications "$STAGING/Applications"

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Bumped Mac to `1.2.4 (12)` for the macOS stream recovery update.
+- Improved WebSocket backpressure handling by deferring per-display recovery keyframes until the client socket backlog has drained.
+- Replaced most slow CoreGraphics display capture fallbacks with a cache of the latest ScreenCaptureKit pixel buffer.
+- Changed macOS scroll injection from pixel units to line units so small iOS scroll steps map to visible Mac scrolling.
+- Hardened H.264 parsing by converting non-contiguous CoreMedia block buffers to contiguous memory before NALU parsing.
 - Bumped Mac to `1.2.4 (11)` and iOS to `1.2.4 (9)` for a stream smoothness rollback.
 - Restored stable H.264 send ordering by removing the build 10 latest-frame-wins backpressure path that could repeatedly drop P-frames and force keyframes under scroll load.
 - Restored immediate iOS scroll input delivery and the previous two-frame Metal in-flight limit to reduce perceived scroll lag and video stutter.

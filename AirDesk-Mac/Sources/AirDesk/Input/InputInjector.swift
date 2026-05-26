@@ -65,7 +65,7 @@ class InputInjector: NSObject {
             let dx = Int32((msg.scrollDeltaX ?? 0).rounded())
             let dy = Int32((msg.scrollDeltaY ?? 0).rounded())
             guard dx != 0 || dy != 0 else { return }
-            if let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0) {
+            if let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0) {
                 event.post(tap: .cghidEventTap)
             }
 

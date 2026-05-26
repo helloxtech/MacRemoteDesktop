@@ -16,6 +16,7 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
     private let encoderQueue = DispatchQueue(label: "airdesk.encoder")
     private var frameCounters: [Int: Int] = [:]
     private var pendingKeyframe: Set<Int> = []
+    private var latestPixelBuffers: [Int: CVPixelBuffer] = [:]
 
     /// Force a keyframe on all active display streams on the next encoded frame.
     func forceKeyframeOnNextFrame() {
@@ -34,7 +35,9 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
 
     func didCaptureFrame(_ frame: CVPixelBuffer, displayIndex: Int) {
         encoderQueue.async { [weak self] in
-            self?.encodeFrame(frame, displayIndex: displayIndex)
+            guard let self else { return }
+            self.latestPixelBuffers[displayIndex] = frame
+            self.encodeFrame(frame, displayIndex: displayIndex)
         }
     }
 
@@ -48,26 +51,31 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
             self.sessionSizes.removeAll()
             self.frameCounters.removeAll()
             self.pendingKeyframe.removeAll()
+            self.latestPixelBuffers.removeAll()
         }
     }
 
-    /// Capture the screen directly via Core Graphics and encode immediately.
-    /// Bypasses ScreenCaptureKit, so it works even when the screen is static.
+    /// Encode the latest ScreenCaptureKit frame immediately, falling back to Core Graphics
+    /// only before the first frame has arrived.
     func captureAndEncodeImmediate(displayIndex: Int, forceKeyframe: Bool = false) {
         encoderQueue.async { [weak self] in
             guard let self else { return }
-            var count: UInt32 = 0
-            CGGetActiveDisplayList(0, nil, &count)
-            var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
-            CGGetActiveDisplayList(count, &displays, &count)
-            let sorted = displays.sorted()
-            guard displayIndex < sorted.count else { return }
-            guard let cgImage = CGDisplayCreateImage(sorted[displayIndex]) else { return }
-            guard let pixelBuffer = self.pixelBuffer(from: cgImage) else { return }
             if forceKeyframe {
                 self.pendingKeyframe.insert(displayIndex)
             }
-            self.encodeFrame(pixelBuffer, displayIndex: displayIndex)
+            if let cachedBuffer = self.latestPixelBuffers[displayIndex] {
+                self.encodeFrame(cachedBuffer, displayIndex: displayIndex)
+            } else {
+                var count: UInt32 = 0
+                CGGetActiveDisplayList(0, nil, &count)
+                var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+                CGGetActiveDisplayList(count, &displays, &count)
+                let sorted = displays.sorted()
+                guard displayIndex < sorted.count else { return }
+                guard let cgImage = CGDisplayCreateImage(sorted[displayIndex]) else { return }
+                guard let pixelBuffer = self.pixelBuffer(from: cgImage) else { return }
+                self.encodeFrame(pixelBuffer, displayIndex: displayIndex)
+            }
         }
     }
 
@@ -184,16 +192,34 @@ class H264Encoder: NSObject, ScreenCaptureDelegate {
         var videoAnnexBData = Data()
         var containsIDR = false
 
+        var activeDataBuffer = dataBuffer
+        var contiguousBuffer: CMBlockBuffer?
+        if !CMBlockBufferIsRangeContiguous(dataBuffer, atOffset: 0, length: 0) {
+            let status = CMBlockBufferCreateContiguous(
+                allocator: kCFAllocatorDefault,
+                sourceBuffer: dataBuffer,
+                blockAllocator: nil,
+                customBlockSource: nil,
+                offsetToData: 0,
+                dataLength: 0,
+                flags: 0,
+                blockBufferOut: &contiguousBuffer
+            )
+            if status == noErr, let cleanBuffer = contiguousBuffer {
+                activeDataBuffer = cleanBuffer
+            }
+        }
+
         // Convert AVCC to Annex B and inspect each NALU. We only advertise a
         // recovery keyframe when the payload actually contains an IDR slice;
         // cached P-frames marked as keyframes can leave a reconnecting decoder black.
-        let totalLength = CMBlockBufferGetDataLength(dataBuffer)
+        let totalLength = CMBlockBufferGetDataLength(activeDataBuffer)
         videoAnnexBData.reserveCapacity(totalLength + 16)
 
         var dataPointer: UnsafeMutablePointer<Int8>?
         var lengthAtOffset = 0
         var totalLengthOut = 0
-        guard CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0, lengthAtOffsetOut: &lengthAtOffset,
+        guard CMBlockBufferGetDataPointer(activeDataBuffer, atOffset: 0, lengthAtOffsetOut: &lengthAtOffset,
                                           totalLengthOut: &totalLengthOut, dataPointerOut: &dataPointer) == noErr,
               let rawPtr = dataPointer else { return }
 

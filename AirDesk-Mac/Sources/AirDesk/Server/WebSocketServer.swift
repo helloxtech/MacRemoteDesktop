@@ -4,11 +4,17 @@ import AirDeskProtocol
 
 final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable {
 
-    // All access to `connections`, `latestKeyframes`, and `pendingSendCount` must happen on serverQueue.
+    private struct ConnectionDisplayKey: Hashable {
+        let connectionID: ObjectIdentifier
+        let displayIndex: Int
+    }
+
+    // All access to connection/video state must happen on serverQueue.
     private var connections: [NWConnection] = []
     private var latestKeyframes: [Int: Data] = [:]
     private var pendingSendCount: [ObjectIdentifier: Int] = [:]
-    private var awaitingKeyframe: Set<ObjectIdentifier> = []
+    private var awaitingKeyframes: Set<ConnectionDisplayKey> = []
+    private var requestedRecoveryKeyframes: Set<ConnectionDisplayKey> = []
     private var authorizedConnections: Set<ObjectIdentifier> = []
     private var pendingDisplayInputRefreshes: [Int: DispatchWorkItem] = [:]
     private var lastFrameBroadcastTime: [Int: CFAbsoluteTime] = [:]
@@ -63,7 +69,8 @@ final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable 
             self.connections.forEach { $0.cancel() }
             self.connections.removeAll()
             self.pendingSendCount.removeAll()
-            self.awaitingKeyframe.removeAll()
+            self.awaitingKeyframes.removeAll()
+            self.requestedRecoveryKeyframes.removeAll()
             self.authorizedConnections.removeAll()
             self.pendingDisplayInputRefreshes.values.forEach { $0.cancel() }
             self.pendingDisplayInputRefreshes.removeAll()
@@ -124,7 +131,8 @@ final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable 
         serverQueue.async { [weak self] in
             guard let self else { return }
             self.latestKeyframes.removeAll()
-            self.awaitingKeyframe.removeAll()
+            self.awaitingKeyframes.removeAll()
+            self.requestedRecoveryKeyframes.removeAll()
             self.refreshActiveDisplaysOnQueue()
             self.scheduleActiveDisplayRefreshOnQueue(after: 0.45)
             self.scheduleActiveDisplayRefreshOnQueue(after: 1.0)
@@ -135,7 +143,8 @@ final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable 
         serverQueue.async { [weak self] in
             guard let self else { return }
             self.latestKeyframes.removeAll()
-            self.awaitingKeyframe.removeAll()
+            self.awaitingKeyframes.removeAll()
+            self.requestedRecoveryKeyframes.removeAll()
             let msg = ScreenInfoMessage(monitors: monitors)
             guard let data = try? JSONEncoder().encode(msg),
                   let text = String(data: data, encoding: .utf8) else { return }
@@ -181,7 +190,7 @@ final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable 
                 case .failed, .cancelled:
                     let id = ObjectIdentifier(connection)
                     self.pendingSendCount.removeValue(forKey: id)
-                    self.awaitingKeyframe.remove(id)
+                    self.clearRecoveryState(for: id)
                     self.authorizedConnections.remove(id)
                     self.connections.removeAll { $0 === connection }
                     self.notifyAuthorizedClientCount()
@@ -451,9 +460,32 @@ final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable 
         connection.send(content: data, contentContext: ctx, isComplete: true, completion: .contentProcessed({ [weak self] _ in
             self?.serverQueue.async {
                 let count = self?.pendingSendCount[id, default: 1] ?? 1
-                self?.pendingSendCount[id] = max(0, count - 1)
+                let newCount = max(0, count - 1)
+                self?.pendingSendCount[id] = newCount
+                if newCount <= 1 {
+                    self?.requestRecoveryKeyframesIfNeeded(for: id)
+                }
             }
         }))
+    }
+
+    private func clearRecoveryState(for connectionID: ObjectIdentifier) {
+        dispatchPrecondition(condition: .onQueue(serverQueue))
+        awaitingKeyframes = awaitingKeyframes.filter { $0.connectionID != connectionID }
+        requestedRecoveryKeyframes = requestedRecoveryKeyframes.filter { $0.connectionID != connectionID }
+    }
+
+    private func requestRecoveryKeyframesIfNeeded(for connectionID: ObjectIdentifier) {
+        dispatchPrecondition(condition: .onQueue(serverQueue))
+        let pendingDisplays = awaitingKeyframes
+            .filter { $0.connectionID == connectionID && !requestedRecoveryKeyframes.contains($0) }
+            .map(\.displayIndex)
+        guard !pendingDisplays.isEmpty else { return }
+        for displayIndex in pendingDisplays {
+            let key = ConnectionDisplayKey(connectionID: connectionID, displayIndex: displayIndex)
+            requestedRecoveryKeyframes.insert(key)
+            encoder?.captureAndEncodeImmediate(displayIndex: displayIndex, forceKeyframe: true)
+        }
     }
 
     private func sendCurrentLockStatus(to connection: NWConnection) {
@@ -484,7 +516,6 @@ final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable 
         let frame = header.buildFrame(with: data)
         serverQueue.async { [weak self] in
             guard let self else { return }
-            var shouldForceKeyframe = false
             self.broadcastLogCounter += 1
             let targets = self.authorizedConnectionList()
             if self.broadcastLogCounter <= 3 || self.broadcastLogCounter % 300 == 0 {
@@ -496,24 +527,27 @@ final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable 
             self.lastFrameBroadcastTime[displayIndex] = CFAbsoluteTimeGetCurrent()
             for conn in targets {
                 let id = ObjectIdentifier(conn)
-                if self.awaitingKeyframe.contains(id) {
+                let recoveryKey = ConnectionDisplayKey(connectionID: id, displayIndex: displayIndex)
+                if self.awaitingKeyframes.contains(recoveryKey) {
                     if isKeyframe {
-                        self.awaitingKeyframe.remove(id)
-                        self.sendBinary(frame, to: conn)
+                        let pending = self.pendingSendCount[id, default: 0]
+                        if pending <= 1 {
+                            self.awaitingKeyframes.remove(recoveryKey)
+                            self.requestedRecoveryKeyframes.remove(recoveryKey)
+                            self.sendBinary(frame, to: conn)
+                        } else {
+                            self.requestedRecoveryKeyframes.remove(recoveryKey)
+                        }
                     }
                     continue
                 }
 
                 let pending = self.pendingSendCount[id, default: 0]
-                if pending < 3 || isKeyframe {
+                if pending < 3 {
                     self.sendBinary(frame, to: conn)
                 } else {
-                    self.awaitingKeyframe.insert(id)
-                    shouldForceKeyframe = true
+                    self.awaitingKeyframes.insert(recoveryKey)
                 }
-            }
-            if shouldForceKeyframe {
-                self.encoder?.forceKeyframeOnNextFrame()
             }
         }
     }

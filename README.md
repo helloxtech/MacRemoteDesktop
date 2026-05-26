@@ -125,15 +125,13 @@ IOS_DEVICE_ID=<device-udid> scripts/install_ios_device.sh
 Remote access uses Cloudflare Tunnel to expose the Mac AirDesk WebSocket server without router port forwarding.
 
 On the Mac:
-1. Install `cloudflared` with Homebrew.
-2. Start sharing from the AirDesk menu.
-3. Choose **Enable Remote Access (Tunnel)**.
-4. Choose **Copy Tunnel URL** after the tunnel URL appears.
+1. Start sharing from the AirDesk menu.
+2. Choose **Enable Remote Access (Tunnel)**.
+3. Scan the **Connect QR Code** when it appears, or choose **Show Connect QR Code...** from the AirDesk menu.
 
 On iPhone or iPad:
 1. Choose **Remote** connection mode.
-2. Paste the tunnel URL.
-3. Enter the pairing code if this is the first connection from that device.
+2. Tap **Scan QR Code** and scan the code shown on the Mac.
 
 Free Cloudflare tunnels are best-effort. The relay URL can change, and speed or availability may be limited.
 

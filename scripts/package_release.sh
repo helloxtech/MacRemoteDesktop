@@ -10,6 +10,13 @@ ZIP_PATH="$ROOT/dist/$APP_NAME.zip"
 NOTARY_ZIP_PATH="$ROOT/dist/$APP_NAME-notary.zip"
 STAGING="$ROOT/dist/dmg-staging"
 IDENTITY="${DEVELOPER_ID_APPLICATION:-}"
+NOTARY_ARGS=()
+
+if [[ -n "${APPLE_ID:-}" && -n "${APP_SPECIFIC_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]]; then
+  NOTARY_ARGS=(--apple-id "$APPLE_ID" --password "$APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID")
+elif [[ -n "${ASC_KEY_PATH:-}" && -n "${ASC_KEY_ID:-}" && -n "${ASC_ISSUER_ID:-}" ]]; then
+  NOTARY_ARGS=(--key "$ASC_KEY_PATH" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID")
+fi
 
 cd "$ROOT"
 mkdir -p dist build
@@ -47,18 +54,14 @@ fi
 
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
-if [[ -n "${APPLE_ID:-}" && -n "${APP_SPECIFIC_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" && -n "$IDENTITY" ]]; then
+if [[ ${#NOTARY_ARGS[@]} -gt 0 && -n "$IDENTITY" ]]; then
   echo "== Notarize app before packaging =="
   ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$NOTARY_ZIP_PATH"
-  xcrun notarytool submit "$NOTARY_ZIP_PATH" \
-    --apple-id "$APPLE_ID" \
-    --password "$APP_SPECIFIC_PASSWORD" \
-    --team-id "$APPLE_TEAM_ID" \
-    --wait
+  xcrun notarytool submit "$NOTARY_ZIP_PATH" "${NOTARY_ARGS[@]}" --wait
   xcrun stapler staple "$APP_PATH"
   rm -f "$NOTARY_ZIP_PATH"
 else
-  echo "== Notarization skipped: set DEVELOPER_ID_APPLICATION, APPLE_ID, APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID =="
+  echo "== Notarization skipped: set DEVELOPER_ID_APPLICATION and either Apple ID or App Store Connect API key notarization variables =="
 fi
 
 echo "== Create ZIP and DMG =="
@@ -68,13 +71,14 @@ ditto "$APP_PATH" "$STAGING/$APP_NAME.app"
 ln -s /Applications "$STAGING/Applications"
 hdiutil create -volname "$APP_NAME" -srcfolder "$STAGING" -ov -format UDZO "$DMG_PATH"
 
-if [[ -n "${APPLE_ID:-}" && -n "${APP_SPECIFIC_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" && -n "$IDENTITY" ]]; then
+if [[ -n "$IDENTITY" ]]; then
+  echo "== Sign DMG with Developer ID =="
+  codesign --force --timestamp --sign "$IDENTITY" "$DMG_PATH"
+fi
+
+if [[ ${#NOTARY_ARGS[@]} -gt 0 && -n "$IDENTITY" ]]; then
   echo "== Notarize DMG =="
-  xcrun notarytool submit "$DMG_PATH" \
-    --apple-id "$APPLE_ID" \
-    --password "$APP_SPECIFIC_PASSWORD" \
-    --team-id "$APPLE_TEAM_ID" \
-    --wait
+  xcrun notarytool submit "$DMG_PATH" "${NOTARY_ARGS[@]}" --wait
   xcrun stapler staple "$DMG_PATH"
 fi
 

@@ -13,6 +13,7 @@ struct ConnectionView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var draft: ConnectionDraft
     @State private var diagnosticsExport: DiagnosticsExport?
+    @State private var isShowingQRCodeScanner = false
     @State private var pairingCodePrompt = ""
     @FocusState private var focusedField: FocusField?
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -70,6 +71,9 @@ struct ConnectionView: View {
             .navigationBarHidden(true)
             .sheet(item: $diagnosticsExport) { export in
                 DiagnosticsShareSheet(url: export.url)
+            }
+            .sheet(isPresented: $isShowingQRCodeScanner) {
+                QRCodeScannerSheet(onCode: handleScannedCode)
             }
             .sheet(
                 item: Binding(
@@ -225,6 +229,10 @@ struct ConnectionView: View {
                 .font(.headline)
                 .padding(.horizontal, 4)
 
+            if draft.mode == .remoteAccess {
+                scanQRCodeButton
+            }
+
             VStack(spacing: 0) {
                 if draft.mode == .remoteAccess {
                     HStack {
@@ -352,6 +360,18 @@ struct ConnectionView: View {
         .padding(.horizontal)
     }
 
+    private var scanQRCodeButton: some View {
+        Button(action: { isShowingQRCodeScanner = true }) {
+            Label("Scan QR Code", systemImage: "qrcode.viewfinder")
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding(isRegular ? 16 : 12)
+                .background(Color.blue.opacity(0.12))
+                .foregroundColor(.blue)
+                .cornerRadius(12)
+        }
+    }
+
     @ViewBuilder
     private var errorSection: some View {
         if let error = appState.errorMessage {
@@ -385,6 +405,25 @@ struct ConnectionView: View {
 
     private func exportDiagnostics() {
         diagnosticsExport = DiagnosticsExport(url: AirDeskDiagnostics.shared.exportFile())
+    }
+
+    private func handleScannedCode(_ code: String) {
+        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmedCode),
+              let request = AirDeskConnectLink.request(from: url),
+              request.mode == .remoteAccess else {
+            appState.errorMessage = "Scan the QR code shown by AirDesk on your Mac."
+            return
+        }
+
+        draft.setMode(.remoteAccess)
+        draft.remoteAccessURL = AirDeskConnectLink.displayRemoteAccessURL(from: url)
+            ?? request.remoteWebSocketURL?.absoluteString
+            ?? ""
+        draft.pairingCode = request.pairingCode ?? ""
+        focusedField = nil
+        appState.errorMessage = nil
+        appState.connect(using: request)
     }
 
     private func submitPairingCode() {

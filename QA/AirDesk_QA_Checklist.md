@@ -63,6 +63,7 @@ Run this checklist before handing a build to a real user.
 
 - Run `scripts/package_release.sh`.
 - Confirm `dist/AirDesk.app`, `dist/AirDesk.zip`, and `dist/AirDesk.dmg` exist.
+- Confirm `dist/AirDesk.app/Contents/MacOS/cloudflared` exists and runs `--version`.
 - If Developer ID credentials are configured, confirm notarization succeeds.
 - Confirm `dist/AirDesk.zip` is created after app notarization when Developer ID credentials are configured.
 - Install from the DMG and verify the app runs from Applications.

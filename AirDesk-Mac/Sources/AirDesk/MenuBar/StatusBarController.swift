@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 #if !APP_STORE
 import Sparkle
 #endif
@@ -27,6 +28,7 @@ class StatusBarController: NSObject, NSMenuDelegate {
     private let clientCountItem: NSMenuItem
     private let tunnelURLItem: NSMenuItem
     private let copyTunnelURLItem: NSMenuItem
+    private let showTunnelQRCodeItem: NSMenuItem
     private let tunnelNoticeItem: NSMenuItem
     private let permissionSummaryItem: NSMenuItem
     private let screenRecordingItem: NSMenuItem
@@ -47,6 +49,7 @@ class StatusBarController: NSObject, NSMenuDelegate {
     private let clipboard: ClipboardManager
     private let pairing: PairingManager
     private var currentTunnelURL: String?
+    private var shouldShowTunnelQRCodeWhenReady = false
 
     init(server: WebSocketServer, tunnel: CloudflareTunnelManager, capture: ScreenCaptureManager,
          bonjour: BonjourAdvertiser, clipboard: ClipboardManager, pairing: PairingManager) {
@@ -76,6 +79,8 @@ class StatusBarController: NSObject, NSMenuDelegate {
         tunnelURLItem.isEnabled = false
         copyTunnelURLItem = NSMenuItem(title: "Copy Tunnel URL", action: #selector(copyTunnelURL), keyEquivalent: "")
         copyTunnelURLItem.isHidden = true
+        showTunnelQRCodeItem = NSMenuItem(title: "Show Connect QR Code...", action: #selector(showTunnelQRCode), keyEquivalent: "")
+        showTunnelQRCodeItem.isHidden = true
         tunnelNoticeItem = NSMenuItem(title: "Note: Free tunnel relay can be slower, unavailable, or change URL.", action: nil, keyEquivalent: "")
         tunnelNoticeItem.isEnabled = false
         tunnelNoticeItem.isHidden = true
@@ -103,6 +108,7 @@ class StatusBarController: NSObject, NSMenuDelegate {
         toggleItem.target = self
         tunnelToggleItem.target = self
         copyTunnelURLItem.target = self
+        showTunnelQRCodeItem.target = self
         openScreenRecordingItem.target = self
         openAccessibilityItem.target = self
         refreshPermissionsItem.target = self
@@ -134,6 +140,7 @@ class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(tunnelToggleItem)
         menu.addItem(tunnelURLItem)
+        menu.addItem(showTunnelQRCodeItem)
         menu.addItem(copyTunnelURLItem)
         menu.addItem(tunnelNoticeItem)
         menu.addItem(NSMenuItem.separator())
@@ -155,14 +162,21 @@ class StatusBarController: NSObject, NSMenuDelegate {
                     self?.currentTunnelURL = url
                     self?.tunnelURLItem.title = "Tunnel: \(url)"
                     self?.tunnelToggleItem.title = "Disable Remote Access"
+                    self?.showTunnelQRCodeItem.isHidden = false
                     self?.copyTunnelURLItem.isHidden = false
                     self?.tunnelNoticeItem.isHidden = false
+                    if self?.shouldShowTunnelQRCodeWhenReady == true {
+                        self?.shouldShowTunnelQRCodeWhenReady = false
+                        self?.showTunnelQRCode()
+                    }
                 } else {
                     self?.currentTunnelURL = nil
                     self?.tunnelURLItem.title = "Tunnel: Not active"
                     self?.tunnelToggleItem.title = "Enable Remote Access (Tunnel)"
+                    self?.showTunnelQRCodeItem.isHidden = true
                     self?.copyTunnelURLItem.isHidden = true
                     self?.tunnelNoticeItem.isHidden = true
+                    self?.shouldShowTunnelQRCodeWhenReady = false
                 }
             }
         }
@@ -191,7 +205,9 @@ class StatusBarController: NSObject, NSMenuDelegate {
             guard confirmRemoteAccessNotice() else { return }
             tunnelToggleItem.title = "Starting Remote Access..."
             tunnelNoticeItem.isHidden = false
+            shouldShowTunnelQRCodeWhenReady = true
             if !tunnel.start() {
+                shouldShowTunnelQRCodeWhenReady = false
                 showTunnelStartFailed()
             }
         }
@@ -210,7 +226,7 @@ class StatusBarController: NSObject, NSMenuDelegate {
     private func showTunnelStartFailed() {
         let alert = NSAlert()
         alert.messageText = "Remote Access could not start"
-        alert.informativeText = "Install cloudflared with Homebrew first: brew install cloudflare/cloudflare/cloudflared"
+        alert.informativeText = "AirDesk could not find its bundled tunnel helper. Reinstall AirDesk from the official website, then try Remote Access again."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
         alert.runModal()
@@ -221,6 +237,56 @@ class StatusBarController: NSObject, NSMenuDelegate {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(currentTunnelURL, forType: .string)
+    }
+
+    @objc private func showTunnelQRCode() {
+        guard let setupURL = currentRemoteSetupURL else { return }
+        let setupLink = setupURL.absoluteString
+
+        let alert = NSAlert()
+        alert.messageText = "Scan to Connect"
+        alert.informativeText = "Open AirDesk on iPhone and scan this QR code. It includes the current tunnel URL and pairing code."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Copy Setup Link")
+        alert.addButton(withTitle: "Close")
+
+        if let qrImage = QRCodeGenerator.image(for: setupLink, size: 260) {
+            let imageView = NSImageView(image: qrImage)
+            imageView.imageScaling = .scaleProportionallyUpOrDown
+            imageView.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                imageView.widthAnchor.constraint(equalToConstant: 260),
+                imageView.heightAnchor.constraint(equalToConstant: 260)
+            ])
+
+            let pairingLabel = NSTextField(labelWithString: "Pairing Code: \(pairing.currentCode)")
+            pairingLabel.alignment = .center
+            pairingLabel.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
+
+            let stack = NSStackView(views: [imageView, pairingLabel])
+            stack.orientation = .vertical
+            stack.alignment = .centerX
+            stack.spacing = 12
+            alert.accessoryView = stack
+        }
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(setupLink, forType: .string)
+        }
+    }
+
+    private var currentRemoteSetupURL: URL? {
+        guard let currentTunnelURL else { return nil }
+        var components = URLComponents()
+        components.scheme = "airdesk"
+        components.host = "connect"
+        components.queryItems = [
+            URLQueryItem(name: "url", value: currentTunnelURL),
+            URLQueryItem(name: "pairing", value: pairing.currentCode)
+        ]
+        return components.url
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -353,6 +419,21 @@ private enum AppVersion {
 
     static var menuTitle: String {
         "Version \(display)"
+    }
+}
+
+private enum QRCodeGenerator {
+    static func image(for text: String, size: CGFloat) -> NSImage? {
+        guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(Data(text.utf8), forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+
+        guard let outputImage = filter.outputImage else { return nil }
+        let scale = size / outputImage.extent.width
+        let scaledImage = outputImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let context = CIContext(options: [.useSoftwareRenderer: false])
+        guard let cgImage = context.createCGImage(scaledImage, from: scaledImage.extent) else { return nil }
+        return NSImage(cgImage: cgImage, size: NSSize(width: size, height: size))
     }
 }
 

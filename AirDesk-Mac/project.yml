@@ -20,6 +20,7 @@ targets:
     sources:
       - path: Sources/AirDesk
       - path: Assets.xcassets
+      - path: Helpers
     info:
       path: Info.plist
       properties:
@@ -33,7 +34,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.helloxtech.airdesk.mac
         MARKETING_VERSION: 1.2.4
-        CURRENT_PROJECT_VERSION: 13
+        CURRENT_PROJECT_VERSION: 14
         SWIFT_VERSION: 5.9
         INFOPLIST_FILE: Info.plist
         CODE_SIGN_ENTITLEMENTS: AirDesk.entitlements

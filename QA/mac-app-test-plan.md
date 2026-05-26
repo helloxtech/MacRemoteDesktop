@@ -100,9 +100,10 @@
 
 | ID | Test Case | Steps | Expected Result |
 |----|-----------|-------|-----------------|
-| CF-01 | cloudflared not installed | Start tunnel without cloudflared | User-facing install message shown, no crash |
-| CF-02 | cloudflared installed | Install cloudflared, trigger tunnel | Process spawns, URL extracted from stdout |
+| CF-01 | Bundled cloudflared | Install AirDesk, trigger tunnel without Homebrew cloudflared | Bundled helper starts, no install instructions shown |
+| CF-02 | System cloudflared fallback | Remove bundled helper in a debug build, install cloudflared, trigger tunnel | Process spawns, URL extracted from stdout |
 | CF-03 | Tunnel URL parsed | Start tunnel | trycloudflare.com URL shown in menu |
 | CF-04 | Tunnel stop | Stop sharing | cloudflared process terminated |
 | CF-05 | Remote access notice | Enable tunnel | User sees best-effort free tunnel warning before tunnel starts |
 | CF-06 | Copy tunnel URL | Start tunnel, click Copy Tunnel URL | Active tunnel URL is copied to clipboard |
+| CF-07 | QR setup link | Start tunnel, show QR code | QR encodes an `airdesk://connect` link with tunnel URL and pairing code |

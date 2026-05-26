@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Bumped Mac to `1.2.4 (14)` and iOS to `1.2.4 (10)` for one-scan Remote Access setup.
+- Added a Mac Remote Access QR code that contains the active tunnel URL and current pairing code.
+- Added an iOS QR scanner for AirDesk setup links so Remote Access can connect without typing the URL or pairing code.
+- Bundled the Cloudflare tunnel helper with the Mac app so normal installs no longer need a separate Homebrew `cloudflared` install.
 - Bumped Mac to `1.2.4 (13)` for the scroll tuning and installer cleanup reminder update.
 - Slowed native Mac line scrolling with fractional accumulation so small iOS scroll gestures remain responsive without jumping too far.
 - Restored installer cleanup reminders after updates by retrying after launch, supporting `.pkg` installers, and keeping cleanup independent from permission prompts.

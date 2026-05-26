@@ -8,23 +8,31 @@ class CloudflareTunnelManager {
         process?.isRunning == true
     }
 
-    private let cloudflaredPaths = [
-        "/usr/local/bin/cloudflared",
-        "/opt/homebrew/bin/cloudflared"
-    ]
+    private var cloudflaredURLs: [URL] {
+        var urls: [URL] = []
+        if let helperURL = Bundle.main.url(forAuxiliaryExecutable: "cloudflared") {
+            urls.append(helperURL)
+        }
+        if let resourceURL = Bundle.main.url(forResource: "cloudflared", withExtension: nil) {
+            urls.append(resourceURL)
+        }
+        urls.append(URL(fileURLWithPath: "/usr/local/bin/cloudflared"))
+        urls.append(URL(fileURLWithPath: "/opt/homebrew/bin/cloudflared"))
+        return urls
+    }
 
     @discardableResult
     func start(localPort: UInt16 = 7890) -> Bool {
         guard !isRunning else { return true }
-        guard let binaryPath = cloudflaredPaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
-            print("cloudflared not found. Install via: brew install cloudflare/cloudflare/cloudflared")
+        guard let binaryURL = cloudflaredURLs.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
+            print("CloudflareTunnelManager: cloudflared helper not found or not executable")
             urlHandler?(nil)
             return false
         }
 
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: binaryPath)
-        proc.arguments = ["tunnel", "--url", "http://localhost:\(localPort)"]
+        proc.executableURL = binaryURL
+        proc.arguments = ["tunnel", "--url", "http://localhost:\(localPort)", "--no-autoupdate"]
 
         let pipe = Pipe()
         proc.standardOutput = pipe
@@ -50,7 +58,7 @@ class CloudflareTunnelManager {
             return false
         }
         self.process = proc
-        print("CloudflareTunnelManager: started cloudflared")
+        print("CloudflareTunnelManager: started cloudflared at \(binaryURL.path)")
         return true
     }
 

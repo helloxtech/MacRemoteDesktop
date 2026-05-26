@@ -20,6 +20,7 @@
 | C-11 | Invalid remote URL | Enter invalid Remote URL, tap Connect Remotely | Error message shown |
 | C-12 | Connection modes | Open the connection mode picker | Modes are labeled Local, Remote, and VNC |
 | C-13 | Local mode copy | Select Local mode | Helper text explains same-Wi-Fi AirDesk streaming and pairing |
+| C-14 | Remote QR scanner | Select Remote mode, tap Scan QR Code | Camera scanner opens and can be cancelled |
 
 ---
 
@@ -34,6 +35,7 @@
 | CF-05 | Reconnect on drop | Wi-Fi blip | Auto-reconnects with backoff |
 | CF-06 | Max reconnect attempts | Sustained disconnection | Stops retrying, shows error |
 | CF-07 | Remote tunnel connection | Paste active Mac tunnel URL and pairing code | Transitions to remote desktop view |
+| CF-07A | Remote QR connection | Scan the QR code shown by the Mac AirDesk menu | Tunnel URL and pairing code are applied and the app connects automatically |
 | CF-08 | First-time Local pairing prompt | Tap a Local Mac, or tap Connect Locally, on an iPhone that has no saved AirDesk trust token | Pairing Required sheet opens and asks for the six-digit Mac menu code before connecting |
 | CF-09 | Local pairing retry | Enter the correct six-digit code in the pairing sheet | App retries automatically and transitions to remote desktop view |
 | CF-10 | Incomplete pairing code | Enter fewer than six digits in the pairing sheet | Connect action remains disabled |

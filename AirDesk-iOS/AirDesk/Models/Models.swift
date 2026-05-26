@@ -130,6 +130,80 @@ enum RemoteAccessURLNormalizer {
     }
 }
 
+enum AirDeskConnectLink {
+    static func request(from url: URL) -> ConnectionRequest? {
+        guard url.scheme?.lowercased() == "airdesk",
+              url.host?.lowercased() == "connect",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        let queryItems = components.queryItems ?? []
+        let pairing = firstValue(named: ["pairing", "pairingCode", "code"], in: queryItems)
+
+        if let remoteParam = firstValue(named: ["url"], in: queryItems),
+           let remoteURL = RemoteAccessURLNormalizer.webSocketURL(from: remoteParam) {
+            return remoteAccessRequest(remoteURL: remoteURL, pairing: pairing)
+        }
+
+        guard let hostParam = firstValue(named: ["host"], in: queryItems),
+              let portString = firstValue(named: ["port"], in: queryItems),
+              let port = Int(portString) else {
+            return nil
+        }
+
+        let host = DiscoveredHost(name: hostParam, host: hostParam, port: port)
+        return ConnectionRequest(
+            mode: .airDesk,
+            host: host,
+            pairingCode: normalizedPairing(pairing),
+            vncUsername: nil,
+            vncPassword: nil
+        )
+    }
+
+    static func displayRemoteAccessURL(from url: URL) -> String? {
+        guard url.scheme?.lowercased() == "airdesk",
+              url.host?.lowercased() == "connect",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let remoteParam = firstValue(named: ["url"], in: components.queryItems ?? []),
+              RemoteAccessURLNormalizer.webSocketURL(from: remoteParam) != nil else {
+            return nil
+        }
+        return remoteParam
+    }
+
+    private static func remoteAccessRequest(remoteURL: URL, pairing: String?) -> ConnectionRequest {
+        let hostName = remoteURL.host ?? remoteURL.absoluteString
+        let port = remoteURL.port ?? (remoteURL.scheme == "ws" ? 80 : 443)
+        let host = DiscoveredHost(name: hostName, host: hostName, port: port)
+        return ConnectionRequest(
+            mode: .remoteAccess,
+            host: host,
+            pairingCode: normalizedPairing(pairing),
+            vncUsername: nil,
+            vncPassword: nil,
+            remoteWebSocketURL: remoteURL
+        )
+    }
+
+    private static func firstValue(named names: [String], in queryItems: [URLQueryItem]) -> String? {
+        for name in names {
+            if let value = queryItems.first(where: { $0.name == name })?.value {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func normalizedPairing(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let digits = value.filter(\.isNumber)
+        guard !digits.isEmpty else { return nil }
+        return String(digits.prefix(6))
+    }
+}
+
 struct VNCDisplayInfo: Identifiable, Equatable {
     let id: UInt32
     let frame: CGRect

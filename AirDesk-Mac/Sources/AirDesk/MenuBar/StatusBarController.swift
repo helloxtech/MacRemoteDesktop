@@ -218,11 +218,11 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
 
     private func confirmRemoteAccessNotice() -> Bool {
         let alert = NSAlert()
-        alert.messageText = "Remote Access uses a free Cloudflare tunnel"
-        alert.informativeText = "This tunnel is best effort. The relay URL can change, and speed or availability may be limited. If it stops working, try again later or use local Wi-Fi."
+        alert.messageText = "Remote Access may be slower"
+        alert.informativeText = "Remote Access lets you connect when you are away from the same Wi-Fi. It may be slower or stop working sometimes. If that happens, try again later or connect on the same Wi-Fi."
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "Continue")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Turn On Remote Access")
+        alert.addButton(withTitle: "Not Now")
         return alert.runModal() == .alertFirstButtonReturn
     }
 

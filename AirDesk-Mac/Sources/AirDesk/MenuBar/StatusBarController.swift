@@ -5,7 +5,7 @@ import Sparkle
 #endif
 import UniformTypeIdentifiers
 
-class StatusBarController: NSObject, NSMenuDelegate {
+class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
 
     private let statusItem: NSStatusItem
     private let menu: NSMenu
@@ -50,6 +50,8 @@ class StatusBarController: NSObject, NSMenuDelegate {
     private let pairing: PairingManager
     private var currentTunnelURL: String?
     private var shouldShowTunnelQRCodeWhenReady = false
+    private var qrPanel: NSPanel?
+    private var currentSetupLinkForPanel: String?
 
     init(server: WebSocketServer, tunnel: CloudflareTunnelManager, capture: ScreenCaptureManager,
          bonjour: BonjourAdvertiser, clipboard: ClipboardManager, pairing: PairingManager) {
@@ -177,6 +179,7 @@ class StatusBarController: NSObject, NSMenuDelegate {
                     self?.copyTunnelURLItem.isHidden = true
                     self?.tunnelNoticeItem.isHidden = true
                     self?.shouldShowTunnelQRCodeWhenReady = false
+                    self?.closeTunnelQRCodePanel()
                 }
             }
         }
@@ -243,38 +246,147 @@ class StatusBarController: NSObject, NSMenuDelegate {
         guard let setupURL = currentRemoteSetupURL else { return }
         let setupLink = setupURL.absoluteString
 
-        let alert = NSAlert()
-        alert.messageText = "Scan to Connect"
-        alert.informativeText = "Open AirDesk on iPhone and scan this QR code. It includes the current tunnel URL and pairing code."
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Copy Setup Link")
-        alert.addButton(withTitle: "Close")
+        currentSetupLinkForPanel = setupLink
+        qrPanel?.close()
 
-        if let qrImage = QRCodeGenerator.image(for: setupLink, size: 260) {
+        let panel = makeTunnelQRCodePanel(setupLink: setupLink)
+        qrPanel = panel
+        NSApp.activate(ignoringOtherApps: true)
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    private func makeTunnelQRCodePanel(setupLink: String) -> NSPanel {
+        let contentSize = NSSize(width: 392, height: 620)
+        let panel = NSPanel(
+            contentRect: NSRect(origin: .zero, size: contentSize),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "Scan to Connect"
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.isReleasedWhenClosed = false
+        panel.isMovableByWindowBackground = true
+        panel.hidesOnDeactivate = false
+        panel.level = .floating
+        panel.delegate = self
+
+        let root = NSView(frame: NSRect(origin: .zero, size: contentSize))
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let appIconView = NSImageView(image: NSApp.applicationIconImage)
+        appIconView.imageScaling = .scaleProportionallyUpOrDown
+        appIconView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            appIconView.widthAnchor.constraint(equalToConstant: 64),
+            appIconView.heightAnchor.constraint(equalToConstant: 64)
+        ])
+
+        let titleLabel = NSTextField(labelWithString: "Scan to Connect")
+        titleLabel.alignment = .center
+        titleLabel.font = .systemFont(ofSize: 24, weight: .semibold)
+        titleLabel.lineBreakMode = .byTruncatingTail
+
+        let messageLabel = NSTextField(wrappingLabelWithString: "Open AirDesk on iPhone and scan this QR code. It includes the current tunnel URL and pairing code.")
+        messageLabel.alignment = .center
+        messageLabel.font = .systemFont(ofSize: 15, weight: .regular)
+        messageLabel.textColor = .secondaryLabelColor
+        messageLabel.maximumNumberOfLines = 3
+        messageLabel.translatesAutoresizingMaskIntoConstraints = false
+        messageLabel.widthAnchor.constraint(equalToConstant: 320).isActive = true
+
+        let qrView: NSView
+        if let qrImage = QRCodeGenerator.image(for: setupLink, size: 232) {
             let imageView = NSImageView(image: qrImage)
             imageView.imageScaling = .scaleProportionallyUpOrDown
             imageView.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
-                imageView.widthAnchor.constraint(equalToConstant: 260),
-                imageView.heightAnchor.constraint(equalToConstant: 260)
+                imageView.widthAnchor.constraint(equalToConstant: 232),
+                imageView.heightAnchor.constraint(equalToConstant: 232)
             ])
-
-            let pairingLabel = NSTextField(labelWithString: "Pairing Code: \(pairing.currentCode)")
-            pairingLabel.alignment = .center
-            pairingLabel.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
-
-            let stack = NSStackView(views: [imageView, pairingLabel])
-            stack.orientation = .vertical
-            stack.alignment = .centerX
-            stack.spacing = 12
-            alert.accessoryView = stack
+            qrView = imageView
+        } else {
+            let fallbackLabel = NSTextField(wrappingLabelWithString: "QR code could not be generated. Use Copy Setup Link instead.")
+            fallbackLabel.alignment = .center
+            fallbackLabel.textColor = .secondaryLabelColor
+            fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                fallbackLabel.widthAnchor.constraint(equalToConstant: 232),
+                fallbackLabel.heightAnchor.constraint(equalToConstant: 232)
+            ])
+            qrView = fallbackLabel
         }
 
-        if alert.runModal() == .alertFirstButtonReturn {
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(setupLink, forType: .string)
-        }
+        let pairingLabel = NSTextField(labelWithString: "Pairing Code: \(pairing.currentCode)")
+        pairingLabel.alignment = .center
+        pairingLabel.font = .monospacedDigitSystemFont(ofSize: 17, weight: .semibold)
+        pairingLabel.lineBreakMode = .byTruncatingTail
+
+        let copyButton = NSButton(title: "Copy Setup Link", target: self, action: #selector(copyRemoteSetupLinkFromPanel))
+        copyButton.bezelStyle = .rounded
+        copyButton.controlSize = .large
+        copyButton.keyEquivalent = "\r"
+        copyButton.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            copyButton.widthAnchor.constraint(equalToConstant: 320),
+            copyButton.heightAnchor.constraint(equalToConstant: 40)
+        ])
+
+        let closeButton = NSButton(title: "Close", target: self, action: #selector(closeTunnelQRCodePanel))
+        closeButton.bezelStyle = .rounded
+        closeButton.controlSize = .large
+        closeButton.keyEquivalent = "\u{1b}"
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            closeButton.widthAnchor.constraint(equalToConstant: 320),
+            closeButton.heightAnchor.constraint(equalToConstant: 36)
+        ])
+
+        stack.addArrangedSubview(appIconView)
+        stack.setCustomSpacing(18, after: appIconView)
+        stack.addArrangedSubview(titleLabel)
+        stack.addArrangedSubview(messageLabel)
+        stack.setCustomSpacing(18, after: messageLabel)
+        stack.addArrangedSubview(qrView)
+        stack.addArrangedSubview(pairingLabel)
+        stack.setCustomSpacing(18, after: pairingLabel)
+        stack.addArrangedSubview(copyButton)
+        stack.addArrangedSubview(closeButton)
+
+        root.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 32),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -32),
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 28),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -24)
+        ])
+
+        panel.contentView = root
+        return panel
+    }
+
+    @objc private func copyRemoteSetupLinkFromPanel() {
+        guard let currentSetupLinkForPanel else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(currentSetupLinkForPanel, forType: .string)
+    }
+
+    @objc private func closeTunnelQRCodePanel() {
+        qrPanel?.close()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closingWindow = notification.object as? NSWindow, closingWindow == qrPanel else { return }
+        qrPanel = nil
+        currentSetupLinkForPanel = nil
     }
 
     private var currentRemoteSetupURL: URL? {

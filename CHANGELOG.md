@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Bumped Mac to `1.2.4 (15)` and replaced the Remote Access QR alert with a fixed-size connect panel so the QR code and pairing code are not clipped.
 - Bumped Mac to `1.2.4 (14)` and iOS to `1.2.4 (10)` for one-scan Remote Access setup.
 - Added a Mac Remote Access QR code that contains the active tunnel URL and current pairing code.
 - Added an iOS QR scanner for AirDesk setup links so Remote Access can connect without typing the URL or pairing code.

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Bumped Mac to `1.2.4 (13)` for the scroll tuning and installer cleanup reminder update.
+- Slowed native Mac line scrolling with fractional accumulation so small iOS scroll gestures remain responsive without jumping too far.
+- Restored installer cleanup reminders after updates by retrying after launch, supporting `.pkg` installers, and keeping cleanup independent from permission prompts.
 - Bumped Mac to `1.2.4 (12)` for the macOS stream recovery update.
 - Improved WebSocket backpressure handling by deferring per-display recovery keyframes until the client socket backlog has drained.
 - Replaced most slow CoreGraphics display capture fallbacks with a cache of the latest ScreenCaptureKit pixel buffer.

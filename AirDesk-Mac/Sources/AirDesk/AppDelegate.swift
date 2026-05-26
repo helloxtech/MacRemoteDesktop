@@ -80,12 +80,10 @@ private enum InstallReminder {
     }
 
     static func scheduleIfNeeded() {
-        if shouldAutoStartSharing()
-            && (!PermissionChecker.hasScreenRecordingPermission() || !PermissionChecker.hasAccessibilityPermission()) {
-            return
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            presentIfNeeded()
+        for delay in [1.0, 5.0, 20.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                presentIfNeeded()
+            }
         }
     }
 
@@ -168,7 +166,7 @@ private enum InstallReminder {
             .filter { url in
                 let name = url.deletingPathExtension().lastPathComponent.lowercased()
                 let ext = url.pathExtension.lowercased()
-                return name.contains("airdesk") && (ext == "dmg" || ext == "zip")
+                return name.contains("airdesk") && (ext == "dmg" || ext == "zip" || ext == "pkg")
             }
             .sorted {
                 let leftDate = (try? $0.resourceValues(forKeys: resourceKeys).contentModificationDate) ?? .distantPast
@@ -215,16 +213,16 @@ private enum InstallReminder {
 
             case .cleanupArchive(let archiveURL):
                 alert.messageText = "Installer Download Can Be Deleted"
-                alert.informativeText = "AirDesk is already installed in Applications. If you don't need the installer anymore, you can move the downloaded package to Trash."
-                alert.addButton(withTitle: "Show Installer")
+                alert.informativeText = "\(archiveURL.lastPathComponent) is no longer needed after AirDesk is installed. You can move the downloaded installer to Trash."
                 alert.addButton(withTitle: "Move to Trash")
+                alert.addButton(withTitle: "Show Installer")
                 alert.addButton(withTitle: "Later")
 
                 let response = alert.runModal()
                 if response == .alertFirstButtonReturn {
-                    NSWorkspace.shared.activateFileViewerSelecting([archiveURL])
-                } else if response == .alertSecondButtonReturn {
                     moveInstallerArchiveToTrash(archiveURL)
+                } else if response == .alertSecondButtonReturn {
+                    NSWorkspace.shared.activateFileViewerSelecting([archiveURL])
                 }
             }
         }

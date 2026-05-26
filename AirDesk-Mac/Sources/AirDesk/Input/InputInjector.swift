@@ -5,6 +5,7 @@ import AirDeskProtocol
 class InputInjector: NSObject {
 
     private var accessibilityWarned = false
+    private var scrollAccumulator = ScrollDeltaAccumulator(scale: 0.55)
 
     func handleMouseMessage(_ msg: MouseMessage) {
         guard ensureAccessibilityTrusted() else { return }
@@ -62,8 +63,10 @@ class InputInjector: NSObject {
             // Warp cursor to scroll position so macOS delivers the event
             // to the correct window — no separate tap needed on iOS side.
             warpCursor(to: point)
-            let dx = Int32((msg.scrollDeltaX ?? 0).rounded())
-            let dy = Int32((msg.scrollDeltaY ?? 0).rounded())
+            let rawDX = CGFloat(msg.scrollDeltaX ?? 0)
+            let rawDY = CGFloat(msg.scrollDeltaY ?? 0)
+            guard rawDX.isFinite, rawDY.isFinite else { return }
+            let (dx, dy) = scrollAccumulator.consume(displayIndex: msg.displayIndex, deltaX: rawDX, deltaY: rawDY)
             guard dx != 0 || dy != 0 else { return }
             if let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0) {
                 event.post(tap: .cghidEventTap)

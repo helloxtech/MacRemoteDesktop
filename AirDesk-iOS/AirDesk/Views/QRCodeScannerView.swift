@@ -39,7 +39,7 @@ struct QRCodeScannerSheet: View {
                 }
             }
             .background(Color.black.ignoresSafeArea())
-            .navigationTitle("Scan QR Code")
+            .navigationTitle("Scan Mac QR Code")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

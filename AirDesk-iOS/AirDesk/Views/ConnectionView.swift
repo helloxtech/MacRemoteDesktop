@@ -42,7 +42,7 @@ struct ConnectionView: View {
     private var connectButtonTitle: String {
         switch draft.mode {
         case .airDesk: return "Connect Locally"
-        case .remoteAccess: return "Connect Remotely"
+        case .remoteAccess: return "Connect to My Mac"
         case .vnc: return "Connect with VNC"
         }
     }
@@ -177,7 +177,7 @@ struct ConnectionView: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "info.circle.fill")
                 .foregroundColor(.orange)
-            Text("Free Cloudflare tunnels are best effort. The relay URL can change, and speed or availability may be limited. If remote access fails, try again later or use local Wi-Fi.")
+            Text("Remote access can be slower than local Wi-Fi. If it stops working, open AirDesk on your Mac and scan the new QR code, or use Local when you are nearby.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -252,10 +252,10 @@ struct ConnectionView: View {
             VStack(spacing: 0) {
                 if draft.mode == .remoteAccess {
                     HStack {
-                        Text("Tunnel URL")
+                        Text("Mac Link")
                             .foregroundColor(.secondary)
                         Spacer()
-                        TextField("https://example.trycloudflare.com", text: $draft.remoteAccessURL)
+                        TextField("Scan or paste link", text: $draft.remoteAccessURL)
                             .multilineTextAlignment(.trailing)
                             .keyboardType(.URL)
                             .textInputAutocapitalization(.never)
@@ -267,10 +267,10 @@ struct ConnectionView: View {
                     Divider().padding(.leading)
 
                     HStack {
-                        Text("Pairing Code")
+                        Text("Security Code")
                             .foregroundColor(.secondary)
                         Spacer()
-                        TextField("Required first time", text: $draft.pairingCode)
+                        TextField("Auto-filled by QR", text: $draft.pairingCode)
                             .multilineTextAlignment(.trailing)
                             .keyboardType(.numberPad)
                             .textContentType(.oneTimeCode)
@@ -378,7 +378,7 @@ struct ConnectionView: View {
 
     private var scanQRCodeButton: some View {
         Button(action: { isShowingQRCodeScanner = true }) {
-            Label("Scan QR Code", systemImage: "qrcode.viewfinder")
+            Label("Scan QR Code from Mac", systemImage: "qrcode.viewfinder")
                 .font(.headline)
                 .frame(maxWidth: .infinity)
                 .padding(isRegular ? 16 : 12)
@@ -477,7 +477,7 @@ struct ConnectionView: View {
     private func validateInputsIfNeeded() -> Bool {
         if draft.mode == .remoteAccess {
             guard draft.normalizedRemoteAccessURL != nil else {
-                appState.errorMessage = "Enter a valid Cloudflare Tunnel URL."
+                appState.errorMessage = "Scan the QR code from your Mac, or paste the setup link shown there."
                 return false
             }
             return true

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Bumped Mac to `1.2.4 (17)` and iOS to `1.2.4 (11)` for immediate Remote Access QR feedback, higher-contrast remote controls, and inline VNC Mac setup guidance.
 - Bumped Mac to `1.2.4 (16)` and simplified the Remote Access warning for non-technical users.
 - Bumped Mac to `1.2.4 (15)` and replaced the Remote Access QR alert with a fixed-size connect panel so the QR code and pairing code are not clipped.
 - Bumped Mac to `1.2.4 (14)` and iOS to `1.2.4 (10)` for one-scan Remote Access setup.

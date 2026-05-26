@@ -178,6 +178,14 @@ struct RemoteDesktopView: View {
 
                 topButton(toolbarVisible ? "chevron.down" : "ellipsis", action: toggleToolbar)
             }
+            .padding(.horizontal, isRegular ? 6 : 4)
+            .padding(.vertical, isRegular ? 5 : 4)
+            .background(Color.black.opacity(0.52))
+            .overlay(
+                Capsule().stroke(Color.white.opacity(0.20), lineWidth: 1)
+            )
+            .clipShape(Capsule())
+            .shadow(color: .black.opacity(0.45), radius: 8, x: 0, y: 3)
 
             if appState.isHostLocked {
                 Text(appState.hostStatusMessage ?? "Mac is locked")
@@ -304,6 +312,14 @@ struct RemoteDesktopView: View {
             .padding(.vertical, isRegular ? 8 : 6)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.black.opacity(0.58))
+        .overlay(
+            RoundedRectangle(cornerRadius: isRegular ? 18 : 14)
+                .stroke(Color.white.opacity(0.20), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: isRegular ? 18 : 14))
+        .shadow(color: .black.opacity(0.50), radius: 10, x: 0, y: 4)
+        .padding(.horizontal, isRegular ? 8 : 6)
         .padding(.bottom, 0)
     }
 
@@ -318,27 +334,58 @@ struct RemoteDesktopView: View {
                         Text(mode.title)
                             .font(.system(size: isRegular ? 12 : 10, weight: .semibold))
                     }
-                    .foregroundColor(selected ? .black : .white)
+                    .foregroundColor(remoteButtonForeground(active: selected))
                     .frame(minWidth: isRegular ? 76 : 62, minHeight: isRegular ? 38 : 32)
                     .padding(.horizontal, isRegular ? 4 : 3)
-                    .background(selected ? Color.white : Color.clear)
+                    .background(remoteButtonFill(active: selected))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: isRegular ? 8 : 7)
+                            .stroke(remoteButtonStroke(active: selected), lineWidth: 1)
+                    )
                     .cornerRadius(isRegular ? 8 : 7)
                 }
             }
         }
         .padding(3)
-        .background(Color.white.opacity(0.08))
+        .background(Color.black.opacity(0.35))
+        .overlay(
+            RoundedRectangle(cornerRadius: isRegular ? 10 : 8)
+                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+        )
         .cornerRadius(isRegular ? 10 : 8)
+    }
+
+    private func remoteButtonFill(active: Bool = false, highlighted: Bool = false, enabled: Bool = true) -> Color {
+        guard enabled else { return Color.black.opacity(0.42) }
+        if highlighted { return Color.yellow.opacity(0.92) }
+        if active { return Color.blue.opacity(0.94) }
+        return Color.black.opacity(0.74)
+    }
+
+    private func remoteButtonStroke(active: Bool = false, highlighted: Bool = false, enabled: Bool = true) -> Color {
+        guard enabled else { return Color.white.opacity(0.12) }
+        if highlighted { return Color.yellow.opacity(0.85) }
+        if active { return Color.cyan.opacity(0.80) }
+        return Color.white.opacity(0.28)
+    }
+
+    private func remoteButtonForeground(active: Bool = false, highlighted: Bool = false, enabled: Bool = true) -> Color {
+        guard enabled else { return Color.white.opacity(0.42) }
+        return highlighted ? .black : .white
     }
 
     private func topButton(_ icon: String, highlight: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: isRegular ? 15 : 12, weight: .semibold))
-                .foregroundColor(highlight ? .yellow : .white)
+                .foregroundColor(remoteButtonForeground(highlighted: highlight))
                 .frame(width: isRegular ? 40 : 32, height: isRegular ? 34 : 28)
-                .background(Color.white.opacity(0.10))
+                .background(remoteButtonFill(highlighted: highlight))
+                .overlay(
+                    Capsule().stroke(remoteButtonStroke(highlighted: highlight), lineWidth: 1)
+                )
                 .cornerRadius(isRegular ? 17 : 14)
+                .shadow(color: .black.opacity(0.42), radius: 5, x: 0, y: 2)
         }
     }
 
@@ -351,11 +398,15 @@ struct RemoteDesktopView: View {
                 Text("\(monitor.id + 1)")
                     .font(.system(size: isRegular ? 13 : 11, weight: .semibold))
             }
-            .foregroundColor(selected ? .black : .white)
+            .foregroundColor(remoteButtonForeground(active: selected))
             .padding(.horizontal, isRegular ? 10 : 7)
             .frame(height: isRegular ? 34 : 28)
-            .background(selected ? Color.white : Color.white.opacity(0.10))
+            .background(remoteButtonFill(active: selected))
+            .overlay(
+                Capsule().stroke(remoteButtonStroke(active: selected), lineWidth: 1)
+            )
             .cornerRadius(isRegular ? 17 : 14)
+            .shadow(color: .black.opacity(0.42), radius: 5, x: 0, y: 2)
         }
     }
 
@@ -363,10 +414,15 @@ struct RemoteDesktopView: View {
         Button(action: { if enabled { action() } }) {
             Image(systemName: icon)
                 .font(.system(size: isRegular ? 17 : 13, weight: .semibold))
-                .foregroundColor(enabled ? (highlight ? .yellow : .white) : .white.opacity(0.35))
+                .foregroundColor(remoteButtonForeground(highlighted: highlight, enabled: enabled))
                 .frame(width: isRegular ? 46 : 36, height: isRegular ? 44 : 36)
-                .background(Color.white.opacity(enabled ? (highlight ? 0.18 : 0.08) : 0.04))
+                .background(remoteButtonFill(highlighted: highlight, enabled: enabled))
+                .overlay(
+                    RoundedRectangle(cornerRadius: isRegular ? 10 : 8)
+                        .stroke(remoteButtonStroke(highlighted: highlight, enabled: enabled), lineWidth: 1)
+                )
                 .cornerRadius(isRegular ? 10 : 8)
+                .shadow(color: .black.opacity(0.42), radius: 5, x: 0, y: 2)
         }
         .disabled(!enabled)
     }
@@ -375,11 +431,16 @@ struct RemoteDesktopView: View {
         Button(action: { if enabled { action() } }) {
             Text(label)
                 .font(.system(size: isRegular ? 16 : 12, weight: .semibold))
-                .foregroundColor(enabled ? .white : .white.opacity(0.35))
+                .foregroundColor(remoteButtonForeground(enabled: enabled))
                 .frame(minWidth: isRegular ? 48 : 36, minHeight: isRegular ? 44 : 36)
                 .padding(.horizontal, 2)
-                .background(Color.white.opacity(enabled ? 0.08 : 0.04))
+                .background(remoteButtonFill(enabled: enabled))
+                .overlay(
+                    RoundedRectangle(cornerRadius: isRegular ? 10 : 8)
+                        .stroke(remoteButtonStroke(enabled: enabled), lineWidth: 1)
+                )
                 .cornerRadius(isRegular ? 10 : 8)
+                .shadow(color: .black.opacity(0.42), radius: 5, x: 0, y: 2)
         }
         .disabled(!enabled)
     }
@@ -389,17 +450,22 @@ struct RemoteDesktopView: View {
         return Button { toggleModifier(mod) } label: {
             Text(symbol)
                 .font(.system(size: isRegular ? 20 : 15, weight: .semibold))
-                .foregroundColor(enabled ? (active ? .black : .white) : .white.opacity(0.35))
+                .foregroundColor(remoteButtonForeground(active: active, enabled: enabled))
                 .frame(width: isRegular ? 48 : 38, height: isRegular ? 44 : 36)
-                .background(enabled ? (active ? Color.white : Color.white.opacity(0.08)) : Color.white.opacity(0.04))
+                .background(remoteButtonFill(active: active, enabled: enabled))
+                .overlay(
+                    RoundedRectangle(cornerRadius: isRegular ? 10 : 8)
+                        .stroke(remoteButtonStroke(active: active, enabled: enabled), lineWidth: 1)
+                )
                 .cornerRadius(isRegular ? 10 : 8)
+                .shadow(color: .black.opacity(0.42), radius: 5, x: 0, y: 2)
         }
         .disabled(!enabled)
     }
 
     private var separator: some View {
         Rectangle()
-            .fill(Color.white.opacity(0.15))
+            .fill(Color.white.opacity(0.28))
             .frame(width: 1, height: isRegular ? 30 : 22)
             .padding(.horizontal, isRegular ? 4 : 2)
     }
@@ -452,7 +518,11 @@ struct LatencyBadge: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 28)
-        .background(Color.white.opacity(0.10))
+        .background(Color.black.opacity(0.74))
+        .overlay(
+            Capsule().stroke(Color.white.opacity(0.25), lineWidth: 1)
+        )
         .cornerRadius(14)
+        .shadow(color: .black.opacity(0.42), radius: 5, x: 0, y: 2)
     }
 }

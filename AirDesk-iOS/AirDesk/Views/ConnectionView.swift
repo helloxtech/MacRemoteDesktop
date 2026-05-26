@@ -141,13 +141,7 @@ struct ConnectionView: View {
                 }
 
                 if draft.mode == .vnc {
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "info.circle.fill")
-                            .foregroundColor(.blue)
-                        Text("Enable Screen Sharing on the Mac, or another VNC server, before using compatibility mode. Port 5900 is the default.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+                    vncSetupGuide
                 }
             }
             .padding(isRegular ? 16 : 12)
@@ -155,6 +149,28 @@ struct ConnectionView: View {
             .cornerRadius(12)
         }
         .padding(.horizontal)
+    }
+
+    private var vncSetupGuide: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Set up your Mac for VNC", systemImage: "list.bullet.rectangle")
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(.blue)
+
+            VStack(alignment: .leading, spacing: 8) {
+                VNCSetupStep(number: 1, text: "On the Mac, open System Settings > General > Sharing.")
+                VNCSetupStep(number: 2, text: "If Remote Management is on, turn it off, then turn on Screen Sharing.")
+                VNCSetupStep(number: 3, text: "Open Screen Sharing options. Allow your Mac user, then set Computer Settings > VNC viewers may control screen with password.")
+                VNCSetupStep(number: 4, text: "In AirDesk, use the Mac IP address, port 5900, and that VNC password.")
+            }
+        }
+        .padding(isRegular ? 14 : 12)
+        .background(Color.blue.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.blue.opacity(0.18), lineWidth: 1)
+        )
+        .cornerRadius(12)
     }
 
     private var remoteAccessNotice: some View {
@@ -482,6 +498,27 @@ struct ConnectionView: View {
 private struct DiagnosticsExport: Identifiable {
     let id = UUID()
     let url: URL
+}
+
+private struct VNCSetupStep: View {
+    let number: Int
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("\(number)")
+                .font(.caption.weight(.bold))
+                .foregroundColor(.white)
+                .frame(width: 20, height: 20)
+                .background(Color.blue)
+                .clipShape(Circle())
+
+            Text(text)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
 }
 
 private struct PairingCodeSheet: View {

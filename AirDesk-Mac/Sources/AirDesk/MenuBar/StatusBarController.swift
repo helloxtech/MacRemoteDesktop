@@ -209,8 +209,10 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
             tunnelToggleItem.title = "Starting Remote Access..."
             tunnelNoticeItem.isHidden = false
             shouldShowTunnelQRCodeWhenReady = true
+            showTunnelQRCodeStartingPanel()
             if !tunnel.start() {
                 shouldShowTunnelQRCodeWhenReady = false
+                closeTunnelQRCodePanel()
                 showTunnelStartFailed()
             }
         }
@@ -243,11 +245,14 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
     }
 
     @objc private func showTunnelQRCode() {
-        guard let setupURL = currentRemoteSetupURL else { return }
+        guard let setupURL = currentRemoteSetupURL else {
+            showTunnelQRCodeStartingPanel()
+            return
+        }
         let setupLink = setupURL.absoluteString
 
-        currentSetupLinkForPanel = setupLink
         qrPanel?.close()
+        currentSetupLinkForPanel = setupLink
 
         let panel = makeTunnelQRCodePanel(setupLink: setupLink)
         qrPanel = panel
@@ -256,7 +261,18 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         panel.makeKeyAndOrderFront(nil)
     }
 
-    private func makeTunnelQRCodePanel(setupLink: String) -> NSPanel {
+    private func showTunnelQRCodeStartingPanel() {
+        qrPanel?.close()
+        currentSetupLinkForPanel = nil
+
+        let panel = makeTunnelQRCodePanel(setupLink: nil)
+        qrPanel = panel
+        NSApp.activate(ignoringOtherApps: true)
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    private func makeTunnelQRCodePanel(setupLink: String?) -> NSPanel {
         let contentSize = NSSize(width: 392, height: 620)
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: contentSize),
@@ -264,7 +280,7 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        panel.title = "Scan to Connect"
+        panel.title = setupLink == nil ? "Starting Remote Access" : "Scan to Connect"
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.isReleasedWhenClosed = false
@@ -289,12 +305,15 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
             appIconView.heightAnchor.constraint(equalToConstant: 64)
         ])
 
-        let titleLabel = NSTextField(labelWithString: "Scan to Connect")
+        let titleLabel = NSTextField(labelWithString: setupLink == nil ? "Starting Remote Access" : "Scan to Connect")
         titleLabel.alignment = .center
         titleLabel.font = .systemFont(ofSize: 24, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
 
-        let messageLabel = NSTextField(wrappingLabelWithString: "Open AirDesk on iPhone and scan this QR code. It includes the current tunnel URL and pairing code.")
+        let messageText = setupLink == nil
+            ? "Keep this window open. The QR code will appear as soon as the secure link is ready."
+            : "Open AirDesk on iPhone and scan this QR code. It includes the current tunnel URL and pairing code."
+        let messageLabel = NSTextField(wrappingLabelWithString: messageText)
         messageLabel.alignment = .center
         messageLabel.font = .systemFont(ofSize: 15, weight: .regular)
         messageLabel.textColor = .secondaryLabelColor
@@ -303,7 +322,7 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         messageLabel.widthAnchor.constraint(equalToConstant: 320).isActive = true
 
         let qrView: NSView
-        if let qrImage = QRCodeGenerator.image(for: setupLink, size: 232) {
+        if let setupLink, let qrImage = QRCodeGenerator.image(for: setupLink, size: 232) {
             let imageView = NSImageView(image: qrImage)
             imageView.imageScaling = .scaleProportionallyUpOrDown
             imageView.translatesAutoresizingMaskIntoConstraints = false
@@ -312,6 +331,30 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
                 imageView.heightAnchor.constraint(equalToConstant: 232)
             ])
             qrView = imageView
+        } else if setupLink == nil {
+            let progress = NSProgressIndicator()
+            progress.style = .spinning
+            progress.controlSize = .large
+            progress.startAnimation(nil)
+            progress.translatesAutoresizingMaskIntoConstraints = false
+
+            let statusLabel = NSTextField(wrappingLabelWithString: "Creating secure link...")
+            statusLabel.alignment = .center
+            statusLabel.font = .systemFont(ofSize: 15, weight: .medium)
+            statusLabel.textColor = .secondaryLabelColor
+            statusLabel.translatesAutoresizingMaskIntoConstraints = false
+            statusLabel.widthAnchor.constraint(equalToConstant: 220).isActive = true
+
+            let placeholderStack = NSStackView(views: [progress, statusLabel])
+            placeholderStack.orientation = .vertical
+            placeholderStack.alignment = .centerX
+            placeholderStack.spacing = 14
+            placeholderStack.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                placeholderStack.widthAnchor.constraint(equalToConstant: 232),
+                placeholderStack.heightAnchor.constraint(equalToConstant: 232)
+            ])
+            qrView = placeholderStack
         } else {
             let fallbackLabel = NSTextField(wrappingLabelWithString: "QR code could not be generated. Use Copy Setup Link instead.")
             fallbackLabel.alignment = .center
@@ -329,10 +372,11 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         pairingLabel.font = .monospacedDigitSystemFont(ofSize: 17, weight: .semibold)
         pairingLabel.lineBreakMode = .byTruncatingTail
 
-        let copyButton = NSButton(title: "Copy Setup Link", target: self, action: #selector(copyRemoteSetupLinkFromPanel))
+        let copyButton = NSButton(title: setupLink == nil ? "Preparing Setup Link..." : "Copy Setup Link", target: self, action: #selector(copyRemoteSetupLinkFromPanel))
         copyButton.bezelStyle = .rounded
         copyButton.controlSize = .large
         copyButton.keyEquivalent = "\r"
+        copyButton.isEnabled = setupLink != nil
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             copyButton.widthAnchor.constraint(equalToConstant: 320),

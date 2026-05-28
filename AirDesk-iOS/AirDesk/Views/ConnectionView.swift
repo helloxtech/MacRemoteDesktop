@@ -13,6 +13,7 @@ struct ConnectionView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var draft: ConnectionDraft
     @State private var diagnosticsExport: DiagnosticsExport?
+    @State private var issueReportStatus: String?
     @State private var isShowingQRCodeScanner = false
     @State private var pairingCodePrompt = ""
     @FocusState private var focusedField: FocusField?
@@ -431,12 +432,28 @@ struct ConnectionView: View {
     @ViewBuilder
     private var errorSection: some View {
         if let error = appState.errorMessage {
-            HStack {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
-                Text(error)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                HStack {
+                    Button {
+                        reportIssue(error)
+                    } label: {
+                        Label("Report Issue", systemImage: "paperplane")
+                    }
+                    .font(.caption.weight(.semibold))
+
+                    if let issueReportStatus {
+                        Text(issueReportStatus)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
             .padding()
             .background(Color(.secondarySystemGroupedBackground))
@@ -470,6 +487,52 @@ struct ConnectionView: View {
 
     private func exportDiagnostics() {
         diagnosticsExport = DiagnosticsExport(url: AirDeskDiagnostics.shared.exportFile())
+    }
+
+    private func reportIssue(_ error: String) {
+        issueReportStatus = "Sending..."
+        AirDeskDiagnostics.shared.record("Issue report requested from connection error")
+        AirDeskDiagnostics.shared.uploadIssueReport(
+            action: "connection_error",
+            reason: "user_report",
+            errorMessage: error,
+            context: issueReportContext()
+        ) { result in
+            switch result {
+            case .success(let reportID):
+                issueReportStatus = "Sent \(reportID.prefix(8))"
+            case .failure:
+                issueReportStatus = "Could not send"
+            }
+        }
+    }
+
+    private func issueReportContext() -> [String: Any] {
+        let remoteURL = draft.normalizedRemoteAccessURL
+        let manualHost = draft.manualIP.trimmingCharacters(in: .whitespacesAndNewlines)
+        var context: [String: Any] = [
+            "selectedMode": draft.mode.rawValue,
+            "connectionState": String(describing: appState.connectionState),
+            "discoveredHostsCount": appState.discoveredHosts.count,
+            "savedRemoteConnectionsCount": appState.remoteConnectionStore.connections.count,
+            "hasPairingCode": !draft.pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            "hasVNCUsername": !draft.vncUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            "hasVNCPassword": !draft.vncPassword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ]
+
+        if !manualHost.isEmpty {
+            context["manualHost"] = manualHost
+            context["manualPort"] = draft.resolvedPort ?? draft.mode.defaultPort
+        }
+
+        if let remoteURL {
+            context["remoteAccessScheme"] = remoteURL.scheme ?? ""
+            context["remoteAccessHost"] = remoteURL.host ?? ""
+            context["remoteAccessPort"] = remoteURL.port ?? (remoteURL.scheme == "ws" ? 80 : 443)
+            context["remoteAccessPathPresent"] = !remoteURL.path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        return context
     }
 
     private func handleScannedCode(_ code: String) {

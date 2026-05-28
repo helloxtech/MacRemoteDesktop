@@ -55,6 +55,42 @@ public struct ConnectMessage: Codable, Sendable {
     }
 }
 
+public struct AirDeskAppVersion: Comparable, Sendable {
+    private let components: [Int]
+
+    public init?(_ value: String) {
+        let parsed = value
+            .split(separator: ".")
+            .compactMap { segment -> Int? in
+                let digits = segment.prefix(while: \.isNumber)
+                guard !digits.isEmpty else { return nil }
+                return Int(digits)
+            }
+
+        guard !parsed.isEmpty else { return nil }
+        components = parsed
+    }
+
+    public static func isVersion(_ current: String, atLeast minimum: String) -> Bool {
+        guard let currentVersion = AirDeskAppVersion(current),
+              let minimumVersion = AirDeskAppVersion(minimum) else {
+            return false
+        }
+
+        return currentVersion >= minimumVersion
+    }
+
+    public static func < (lhs: AirDeskAppVersion, rhs: AirDeskAppVersion) -> Bool {
+        let count = max(lhs.components.count, rhs.components.count)
+        for index in 0..<count {
+            let left = index < lhs.components.count ? lhs.components[index] : 0
+            let right = index < rhs.components.count ? rhs.components[index] : 0
+            if left != right { return left < right }
+        }
+        return false
+    }
+}
+
 public struct PairingStatusMessage: Codable, Sendable {
     public let type: String
     public let paired: Bool

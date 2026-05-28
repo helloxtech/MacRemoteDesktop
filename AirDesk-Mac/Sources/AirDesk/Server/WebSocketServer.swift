@@ -27,6 +27,7 @@ final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable 
     private let displayInputFallbackDelay: TimeInterval = 0.075
     private let displayInputKeyframeInterval: CFAbsoluteTime = 0.75
     private let keyboardInputKeyframeInterval: CFAbsoluteTime = 0.15
+    private let minimumRemoteAccessClientVersion = "1.2.5"
     private var lockObserver: Any?
     private var permissionStatusTimer: DispatchSourceTimer?
 
@@ -367,6 +368,19 @@ final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable 
     }
 
     private func authorizeConnection(_ connection: NWConnection, message: ConnectMessage) -> Bool {
+        if requiresMinimumRemoteAccessClientVersion(connection),
+           !AirDeskAppVersion.isVersion(message.clientVersion, atLeast: minimumRemoteAccessClientVersion) {
+            let status = PairingStatusMessage(
+                paired: false,
+                message: "Update the AirDesk iOS app to version \(minimumRemoteAccessClientVersion) or later before using Remote Access."
+            )
+            AirDeskDiagnostics.shared.record(
+                "Rejected Remote Access client \(message.clientName) version \(message.clientVersion); requires \(minimumRemoteAccessClientVersion)+"
+            )
+            sendPairingStatus(status, to: connection)
+            return false
+        }
+
         let status = pairingManager?.authorize(message)
             ?? PairingStatusMessage(paired: true, message: "Paired")
         sendPairingStatus(status, to: connection)
@@ -374,6 +388,16 @@ final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable 
         authorizedConnections.insert(ObjectIdentifier(connection))
         notifyAuthorizedClientCount()
         return true
+    }
+
+    private func requiresMinimumRemoteAccessClientVersion(_ connection: NWConnection) -> Bool {
+        guard case .hostPort(let host, _) = connection.endpoint else { return false }
+        let value = String(describing: host).lowercased()
+        return value == "localhost"
+            || value == "::1"
+            || value == "0:0:0:0:0:0:0:1"
+            || value == "127.0.0.1"
+            || value.hasPrefix("127.")
     }
 
     private func isAuthorized(_ connection: NWConnection) -> Bool {

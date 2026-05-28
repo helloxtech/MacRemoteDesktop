@@ -24,6 +24,8 @@
 | C-15 | Saved Remote Access row | Connect successfully through a Remote QR code, disconnect, then return to Remote mode | Saved Remote Access shows the Mac and can be tapped to reconnect without scanning |
 | C-16 | Free plan Remote Access gate | Select Remote mode on a device without an active subscription | Remote Access shows Free, Pro, and Power plans; scan/connect actions require Pro or Power |
 | C-17 | Remote Access monthly limit | Use Remote Access until the active plan's monthly hours are exhausted | App stops/blocks Remote Access and prompts the user to upgrade or wait for next month |
+| C-18 | Report connection issue | Trigger any visible connection error, then tap Report Issue | App sends recent diagnostics to HelloX Admin and shows a sent status |
+| C-19 | Unexpected exit report | Force quit or crash the app, then reopen it | Next launch records the prior unexpected exit and sends a crash-recovery report |
 
 ---
 

@@ -19,7 +19,7 @@ struct RemoteAccessPaywallView: View {
                 .padding(20)
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .navigationTitle("Remote Access Pro")
+            .navigationTitle("Remote Access Plans")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

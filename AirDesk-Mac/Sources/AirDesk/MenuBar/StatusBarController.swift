@@ -240,8 +240,15 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         alert.messageText = "Remote Access could not start"
         alert.informativeText = "AirDesk could not find its bundled tunnel helper. Reinstall AirDesk from the official website, then try Remote Access again."
         alert.alertStyle = .warning
+        alert.addButton(withTitle: "Report Issue")
         alert.addButton(withTitle: "OK")
-        alert.runModal()
+        if alert.runModal() == .alertFirstButtonReturn {
+            uploadIssueReport(
+                action: "remote_access_start_failed",
+                reason: "tunnel_helper_missing",
+                errorMessage: alert.informativeText
+            )
+        }
     }
 
     @objc private func copyTunnelURL() {
@@ -526,7 +533,55 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
 #endif
 
     @objc private func reportIssue() {
-        NSWorkspace.shared.open(AppSupport.reportIssueURL())
+        uploadIssueReport(
+            action: "manual_report",
+            reason: "user_report",
+            errorMessage: "User manually reported an AirDesk Mac issue."
+        )
+    }
+
+    private func uploadIssueReport(action: String, reason: String, errorMessage: String) {
+        AirDeskDiagnostics.shared.record("Issue report requested: \(reason)")
+        AirDeskDiagnostics.shared.uploadIssueReport(
+            action: action,
+            reason: reason,
+            errorMessage: errorMessage,
+            context: issueReportContext()
+        ) { result in
+            let alert = NSAlert()
+            switch result {
+            case .success(let reportID):
+                alert.messageText = "Issue report sent"
+                alert.informativeText = "Report ID: \(reportID)"
+                alert.alertStyle = .informational
+            case .failure(let error):
+                alert.messageText = "Issue report could not be sent"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+            }
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
+    }
+
+    private func issueReportContext() -> [String: Any] {
+        var context: [String: Any] = [
+            "isSharing": isSharing,
+            "tunnelIsRunning": tunnel.isRunning,
+            "qrPanelVisible": qrPanel?.isVisible ?? false,
+            "clientStatus": clientCountItem.title,
+            "screenRecordingPermission": PermissionChecker.hasScreenRecordingPermission(),
+            "accessibilityPermission": PermissionChecker.hasAccessibilityPermission()
+        ]
+
+        if let currentTunnelURL,
+           let url = URL(string: currentTunnelURL) {
+            context["tunnelScheme"] = url.scheme ?? ""
+            context["tunnelHost"] = url.host ?? ""
+            context["tunnelPort"] = url.port ?? (url.scheme == "http" ? 80 : 443)
+        }
+
+        return context
     }
 
     private func startSharing() {
@@ -634,34 +689,5 @@ private enum QRCodeGenerator {
         let context = CIContext(options: [.useSoftwareRenderer: false])
         guard let cgImage = context.createCGImage(scaledImage, from: scaledImage.extent) else { return nil }
         return NSImage(cgImage: cgImage, size: NSSize(width: size, height: size))
-    }
-}
-
-private enum AppSupport {
-    static func reportIssueURL() -> URL {
-        var components = URLComponents(string: "https://github.com/helloxtech/MacRemoteDesktop/issues/new")!
-        let os = ProcessInfo.processInfo.operatingSystemVersionString
-        let body = """
-        AirDesk version: \(AppVersion.display)
-        macOS: \(os)
-
-        What happened?
-
-
-        What did you expect?
-
-
-        Steps to reproduce:
-        1.
-        2.
-        3.
-
-        If possible, attach an AirDesk diagnostics export from the Mac menu.
-        """
-        components.queryItems = [
-            URLQueryItem(name: "title", value: "AirDesk issue"),
-            URLQueryItem(name: "body", value: body)
-        ]
-        return components.url ?? URL(string: "https://github.com/helloxtech/MacRemoteDesktop/issues")!
     }
 }

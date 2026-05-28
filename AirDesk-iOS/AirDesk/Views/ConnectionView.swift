@@ -138,6 +138,7 @@ struct ConnectionView: View {
 
                 if draft.mode == .remoteAccess {
                     remoteAccessNotice
+                    remoteAccessPlanSummary
                 }
 
                 if draft.mode == .vnc {
@@ -182,6 +183,30 @@ struct ConnectionView: View {
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private var remoteAccessPlanSummary: some View {
+        let summary = appState.remoteAccessUsageSummary()
+        return HStack(alignment: .top, spacing: 10) {
+            Image(systemName: summary.canStart ? "checkmark.seal.fill" : "lock.fill")
+                .foregroundColor(summary.canStart ? .green : .blue)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(summary.plan.title): \(summary.plan.includedRemoteHoursText)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.primary)
+                Text("Used this month: \(summary.usedText). Remaining: \(summary.remainingText).")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Spacer(minLength: 0)
+            Button(summary.canStart ? "Plans" : "Unlock") {
+                appState.presentRemoteAccessPlans(reason: summary.plan.allowsRemoteAccess ? .monthlyLimitReached : .subscriptionRequired)
+            }
+            .font(.caption.weight(.semibold))
+        }
+        .padding(isRegular ? 14 : 12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .cornerRadius(12)
     }
 
     private var nearbyHostsSection: some View {
@@ -378,7 +403,13 @@ struct ConnectionView: View {
     }
 
     private var scanQRCodeButton: some View {
-        Button(action: { isShowingQRCodeScanner = true }) {
+        Button(action: {
+            if appState.canStartRemoteAccessNow() {
+                isShowingQRCodeScanner = true
+            } else {
+                appState.presentRemoteAccessPlans()
+            }
+        }) {
             Label("Scan QR Code from Mac", systemImage: "qrcode.viewfinder")
                 .font(.headline)
                 .frame(maxWidth: .infinity)

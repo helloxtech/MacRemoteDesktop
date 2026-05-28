@@ -22,6 +22,8 @@
 | C-13 | Local mode copy | Select Local mode | Helper text explains same-Wi-Fi AirDesk streaming and pairing |
 | C-14 | Remote QR scanner | Select Remote mode, tap Scan QR Code | Camera scanner opens and can be cancelled |
 | C-15 | Saved Remote Access row | Connect successfully through a Remote QR code, disconnect, then return to Remote mode | Saved Remote Access shows the Mac and can be tapped to reconnect without scanning |
+| C-16 | Free plan Remote Access gate | Select Remote mode on a device without an active subscription | Remote Access shows Free, Pro, and Power plans; scan/connect actions require Pro or Power |
+| C-17 | Remote Access monthly limit | Use Remote Access until the active plan's monthly hours are exhausted | App stops/blocks Remote Access and prompts the user to upgrade or wait for next month |
 
 ---
 

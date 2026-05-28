@@ -16,6 +16,13 @@ struct ContentView: View {
                 reconnectingRoot
             }
         }
+        .sheet(item: $appState.remoteAccessPaywall) { presentation in
+            RemoteAccessPaywallView(
+                presentation: presentation,
+                appState: appState,
+                subscriptionStore: appState.remoteAccessSubscriptions
+            )
+        }
     }
 
     @ViewBuilder

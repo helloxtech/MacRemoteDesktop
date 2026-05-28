@@ -16,6 +16,7 @@ struct AirDeskApp: App {
             ContentView()
                 .environmentObject(appState)
                 .onAppear {
+                    appState.startStoreServices()
                     appState.startDiscovery()
                 }
                 .onChange(of: scenePhase) { newPhase in

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Bumped iOS to `1.2.5 (15)` for Remote Access Free, Pro, and Power plans, with Pro including 20 remote hours per month and Power including 100 remote hours per month.
 - Bumped Mac to `1.2.4 (22)` so Remote Access shows the QR setup link after a short bounded wait when Cloudflare gives a hostname but readiness probes keep failing.
 - Bumped Mac to `1.2.4 (21)` so Sparkle update windows are brought to the front when updates are shown from the menu bar app.
 - Bumped Mac to `1.2.4 (20)` so the Remote Access setup window stays open and keeps retrying while Cloudflare DNS prepares the new public tunnel hostname.

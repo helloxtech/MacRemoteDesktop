@@ -125,14 +125,21 @@ class AppState: ObservableObject {
     @Published var vncDisplays: [VNCDisplayInfo] = []
     @Published var activeVNCDisplayID: UInt32?
     @Published var pairingChallenge: PairingChallenge?
+    @Published var remoteAccessPaywall: RemoteAccessPaywallPresentation?
+    @Published private(set) var remoteAccessUsageRevision = UUID()
 
     let connectionDraft = ConnectionDraft()
     let remoteConnectionStore = SavedRemoteConnectionStore()
+    let remoteAccessSubscriptions = RemoteAccessSubscriptionStore()
+    let remoteAccessUsageLedger = RemoteAccessUsageLedger()
     private(set) var webSocketClient: WebSocketClient?
     private(set) var vncSessionController: VNCSessionController?
     private var discovery: BonjourDiscovery?
     private let frameDecoderStore = FrameDecoderStore()
     private var pendingPairingRequest: ConnectionRequest?
+    private var remoteAccessSessionStartedAt: Date?
+    private var remoteAccessLimitWorkItem: DispatchWorkItem?
+    private var subscriptionPlanCancellable: AnyCancellable?
 
     // Keyed by displayIndex — fixes the single-handler overwrite bug for multi-monitor
     private var frameUpdateHandlers: [Int: (CVPixelBuffer) -> Void] = [:]
@@ -167,6 +174,13 @@ class AppState: ObservableObject {
                 self?.webSocketClient?.requestStream(displayIndex: displayIndex)
             }
         }
+        subscriptionPlanCancellable = remoteAccessSubscriptions.$activePlan.sink { [weak self] _ in
+            self?.remoteAccessUsageRevision = UUID()
+        }
+    }
+
+    func startStoreServices() {
+        remoteAccessSubscriptions.start()
     }
 
     func startDiscovery() {
@@ -193,6 +207,10 @@ class AppState: ObservableObject {
     }
 
     func connect(using request: ConnectionRequest) {
+        if request.mode == .remoteAccess, !ensureRemoteAccessAllowed() {
+            return
+        }
+
         switch request.mode {
         case .airDesk, .remoteAccess:
             connectAirDesk(using: request)
@@ -229,6 +247,9 @@ class AppState: ObservableObject {
                 self?.pendingPairingRequest = nil
                 self?.pairingChallenge = nil
                 self?.connectionState = .connected
+                if request.mode == .remoteAccess {
+                    self?.beginRemoteAccessUsageSessionIfNeeded()
+                }
                 self?.saveRemoteConnectionIfNeeded(request)
                 self?.requestFreshFrames()
             }
@@ -351,6 +372,24 @@ class AppState: ObservableObject {
         pairingChallenge = nil
         resetConnectionState(keepSelectedHost: false)
         startDiscovery()
+    }
+
+    func presentRemoteAccessPlans(reason: RemoteAccessPaywallPresentation.Reason = .subscriptionRequired) {
+        remoteAccessPaywall = RemoteAccessPaywallPresentation(reason: reason)
+    }
+
+    func canStartRemoteAccessNow() -> Bool {
+        remoteAccessUsageSummary().canStart
+    }
+
+    func remoteAccessUsageSummary(at date: Date = Date()) -> RemoteAccessUsageSummary {
+        let plan = remoteAccessSubscriptions.activePlan
+        return RemoteAccessUsageSummary(
+            plan: plan,
+            usedSeconds: remoteAccessUsageLedger.usedSeconds(at: date),
+            remainingSeconds: remoteAccessUsageLedger.remainingSeconds(for: plan, at: date),
+            canStart: remoteAccessUsageLedger.canStartRemoteAccess(plan: plan, at: date)
+        )
     }
 
     private func connectVNC(using request: ConnectionRequest) {
@@ -513,6 +552,7 @@ class AppState: ObservableObject {
     }
 
     private func resetConnectionState(keepSelectedHost: Bool) {
+        endRemoteAccessUsageSessionIfNeeded()
         let existingWebSocketClient = webSocketClient
         webSocketClient = nil
         existingWebSocketClient?.disconnect()
@@ -546,6 +586,54 @@ class AppState: ObservableObject {
         frameUpdateHandlers.removeAll()
         pendingFrames.removeAll()
         frameDecoderStore.reset()
+    }
+
+    private func ensureRemoteAccessAllowed() -> Bool {
+        let summary = remoteAccessUsageSummary()
+        guard summary.plan.allowsRemoteAccess else {
+            presentRemoteAccessPlans(reason: .subscriptionRequired)
+            errorMessage = nil
+            return false
+        }
+        guard summary.canStart else {
+            presentRemoteAccessPlans(reason: .monthlyLimitReached)
+            errorMessage = "Remote Access time is used up for this month."
+            return false
+        }
+        return true
+    }
+
+    private func beginRemoteAccessUsageSessionIfNeeded() {
+        guard remoteAccessSessionStartedAt == nil else { return }
+        remoteAccessSessionStartedAt = Date()
+        scheduleRemoteAccessLimitDisconnect()
+        remoteAccessUsageRevision = UUID()
+    }
+
+    private func endRemoteAccessUsageSessionIfNeeded() {
+        remoteAccessLimitWorkItem?.cancel()
+        remoteAccessLimitWorkItem = nil
+        guard let startedAt = remoteAccessSessionStartedAt else { return }
+        remoteAccessSessionStartedAt = nil
+        let elapsedSeconds = Int(Date().timeIntervalSince(startedAt).rounded(.up))
+        remoteAccessUsageLedger.addUsage(seconds: elapsedSeconds)
+        remoteAccessUsageRevision = UUID()
+    }
+
+    private func scheduleRemoteAccessLimitDisconnect() {
+        remoteAccessLimitWorkItem?.cancel()
+        let remainingSeconds = remoteAccessUsageSummary().remainingSeconds
+        guard remainingSeconds > 0 else { return }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.errorMessage = "Remote Access time is used up for this month."
+            self.presentRemoteAccessPlans(reason: .monthlyLimitReached)
+            self.resetConnectionState(keepSelectedHost: false)
+            self.startDiscovery()
+        }
+        remoteAccessLimitWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(remainingSeconds), execute: workItem)
     }
 
     func selectVNCDisplay(_ id: UInt32) {

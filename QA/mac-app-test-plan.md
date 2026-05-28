@@ -104,6 +104,7 @@
 | CF-02 | System cloudflared fallback | Remove bundled helper in a debug build, install cloudflared, trigger tunnel | Process spawns, URL extracted from stdout |
 | CF-03 | Tunnel URL parsed | Start tunnel | trycloudflare.com URL shown in menu |
 | CF-04 | Tunnel stop | Stop sharing | cloudflared process terminated |
-| CF-05 | Remote access notice | Enable tunnel | User sees best-effort free tunnel warning before tunnel starts |
+| CF-05 | Remote access notice | Enable tunnel | User sees that scanning once saves the Mac and that Remote Access should stay on to keep the link active |
 | CF-06 | Copy tunnel URL | Start tunnel, click Copy Tunnel URL | Active tunnel URL is copied to clipboard |
 | CF-07 | QR setup link | Start tunnel, show QR code | QR encodes an `airdesk://connect` link with tunnel URL and pairing code |
+| CF-08 | Stable pairing code | Pair an iPhone through Remote Access, then reopen the AirDesk menu | Pairing code remains the same unless Regenerate Pairing Code or Reset Trusted Devices is used |

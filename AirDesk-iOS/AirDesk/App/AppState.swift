@@ -127,6 +127,7 @@ class AppState: ObservableObject {
     @Published var pairingChallenge: PairingChallenge?
 
     let connectionDraft = ConnectionDraft()
+    let remoteConnectionStore = SavedRemoteConnectionStore()
     private(set) var webSocketClient: WebSocketClient?
     private(set) var vncSessionController: VNCSessionController?
     private var discovery: BonjourDiscovery?
@@ -228,6 +229,7 @@ class AppState: ObservableObject {
                 self?.pendingPairingRequest = nil
                 self?.pairingChallenge = nil
                 self?.connectionState = .connected
+                self?.saveRemoteConnectionIfNeeded(request)
                 self?.requestFreshFrames()
             }
         }
@@ -494,6 +496,16 @@ class AppState: ObservableObject {
         if monitors.contains(where: { $0.id == activeMonitorIndex }) {
             webSocketClient?.requestStream(displayIndex: activeMonitorIndex)
         }
+    }
+
+    private func saveRemoteConnectionIfNeeded(_ request: ConnectionRequest) {
+        guard request.mode == .remoteAccess,
+              let remoteURL = request.remoteWebSocketURL else { return }
+        remoteConnectionStore.save(
+            urlString: remoteURL.absoluteString,
+            pairingCode: request.pairingCode,
+            name: request.host.name
+        )
     }
 
     private func resetConnectionState(keepSelectedHost: Bool) {

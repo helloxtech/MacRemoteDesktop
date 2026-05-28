@@ -15,12 +15,13 @@
 | C-06 | Invalid IP | Enter invalid IP, tap Connect | Error message shown |
 | C-07 | Wrong port | Enter correct IP, wrong port | Connection fails gracefully, error shown |
 | C-08 | Discovery loading state | Before any Mac found | Spinner shown with "Scanning local network..." |
-| C-09 | Remote mode notice | Select Remote mode | Free tunnel best-effort relay warning is visible |
+| C-09 | Remote mode notice | Select Remote mode | Remote mode explains that a successful scan is saved for next time |
 | C-10 | Remote URL normalization | Enter a https trycloudflare.com URL | App connects with secure WebSocket tunnel URL |
 | C-11 | Invalid remote URL | Enter invalid Remote URL, tap Connect Remotely | Error message shown |
 | C-12 | Connection modes | Open the connection mode picker | Modes are labeled Local, Remote, and VNC |
 | C-13 | Local mode copy | Select Local mode | Helper text explains same-Wi-Fi AirDesk streaming and pairing |
 | C-14 | Remote QR scanner | Select Remote mode, tap Scan QR Code | Camera scanner opens and can be cancelled |
+| C-15 | Saved Remote Access row | Connect successfully through a Remote QR code, disconnect, then return to Remote mode | Saved Remote Access shows the Mac and can be tapped to reconnect without scanning |
 
 ---
 
@@ -36,6 +37,7 @@
 | CF-06 | Max reconnect attempts | Sustained disconnection | Stops retrying, shows error |
 | CF-07 | Remote tunnel connection | Paste active Mac tunnel URL and pairing code | Transitions to remote desktop view |
 | CF-07A | Remote QR connection | Scan the QR code shown by the Mac AirDesk menu | Tunnel URL and pairing code are applied and the app connects automatically |
+| CF-07B | Remote saved connection | Tap a Saved Remote Access row while the Mac Remote Access tunnel is still active | App reconnects using the saved URL and saved pairing/trust details without opening the QR scanner |
 | CF-08 | First-time Local pairing prompt | Tap a Local Mac, or tap Connect Locally, on an iPhone that has no saved AirDesk trust token | Pairing Required sheet opens and asks for the six-digit Mac menu code before connecting |
 | CF-09 | Local pairing retry | Enter the correct six-digit code in the pairing sheet | App retries automatically and transitions to remote desktop view |
 | CF-10 | Incomplete pairing code | Enter fewer than six digits in the pairing sheet | Connect action remains disabled |

@@ -4,6 +4,7 @@ import AirDeskProtocol
 
 final class PairingManager {
     private let defaults = UserDefaults.standard
+    private let pairingCodeKey = "airdesk.pairing.currentCode.v1"
     private let trustedClientsKey = "airdesk.pairing.trustedClients.v2"
     private let queue = DispatchQueue(label: "airdesk.pairing")
     private(set) var currentCode: String
@@ -16,7 +17,13 @@ final class PairingManager {
     }
 
     init() {
-        currentCode = Self.generateCode()
+        if let savedCode = defaults.string(forKey: pairingCodeKey),
+           Self.isValidCode(savedCode) {
+            currentCode = savedCode
+        } else {
+            currentCode = Self.generateCode()
+            defaults.set(currentCode, forKey: pairingCodeKey)
+        }
     }
 
     func authorize(_ message: ConnectMessage) -> PairingStatusMessage {
@@ -52,7 +59,6 @@ final class PairingManager {
             )
             saveTrustedClients(trusted)
             AirDeskDiagnostics.shared.record("Paired new client: \(message.clientName)")
-            rotateCodeOnQueue()
             return PairingStatusMessage(paired: true, message: "Paired", authToken: secret)
         }
     }
@@ -73,6 +79,7 @@ final class PairingManager {
 
     private func rotateCodeOnQueue() {
         currentCode = Self.generateCode()
+        defaults.set(currentCode, forKey: pairingCodeKey)
         let code = currentCode
         DispatchQueue.main.async { [weak self] in
             self?.codeDidChange?(code)
@@ -94,6 +101,10 @@ final class PairingManager {
 
     private static func generateCode() -> String {
         String(format: "%06d", Int.random(in: 0...999_999))
+    }
+
+    private static func isValidCode(_ code: String) -> Bool {
+        code.count == 6 && code.allSatisfy(\.isNumber)
     }
 
     private static func generateSecret() -> String {

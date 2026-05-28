@@ -177,7 +177,7 @@ struct ConnectionView: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "info.circle.fill")
                 .foregroundColor(.orange)
-            Text("Remote access can be slower than local Wi-Fi. If it stops working, open AirDesk on your Mac and scan the new QR code, or use Local when you are nearby.")
+            Text("Remote access can be slower than local Wi-Fi. After the first successful scan, AirDesk saves this Mac here for next time.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -246,6 +246,7 @@ struct ConnectionView: View {
                 .padding(.horizontal, 4)
 
             if draft.mode == .remoteAccess {
+                savedRemoteConnectionsSection
                 scanQRCodeButton
             }
 
@@ -388,6 +389,14 @@ struct ConnectionView: View {
         }
     }
 
+    private var savedRemoteConnectionsSection: some View {
+        SavedRemoteConnectionsSection(
+            store: appState.remoteConnectionStore,
+            isRegular: isRegular,
+            connect: connectToSavedRemoteConnection
+        )
+    }
+
     @ViewBuilder
     private var errorSection: some View {
         if let error = appState.errorMessage {
@@ -414,6 +423,15 @@ struct ConnectionView: View {
     }
 
     private func connectManually() {
+        submitConnection {
+            draft.manualRequest()
+        }
+    }
+
+    private func connectToSavedRemoteConnection(_ connection: SavedRemoteConnection) {
+        draft.setMode(.remoteAccess)
+        draft.remoteAccessURL = connection.urlString
+        draft.pairingCode = connection.pairingCode ?? ""
         submitConnection {
             draft.manualRequest()
         }
@@ -492,6 +510,43 @@ struct ConnectionView: View {
         }
 
         return true
+    }
+}
+
+private struct SavedRemoteConnectionsSection: View {
+    @ObservedObject var store: SavedRemoteConnectionStore
+    let isRegular: Bool
+    let connect: (SavedRemoteConnection) -> Void
+
+    var body: some View {
+        if !store.connections.isEmpty {
+            content
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Saved Remote Access", systemImage: "bookmark")
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(.blue)
+                .padding(.horizontal, 4)
+
+            VStack(spacing: 0) {
+                ForEach(Array(store.connections.enumerated()), id: \.element.id) { index, connection in
+                    SavedRemoteConnectionRow(
+                        connection: connection,
+                        isRegular: isRegular,
+                        connect: { connect(connection) },
+                        remove: { store.remove(connection) }
+                    )
+                    if index < store.connections.count - 1 {
+                        Divider().padding(.leading, 56)
+                    }
+                }
+            }
+            .background(Color(.secondarySystemGroupedBackground))
+            .cornerRadius(12)
+        }
     }
 }
 
@@ -633,5 +688,52 @@ struct HostRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct SavedRemoteConnectionRow: View {
+    let connection: SavedRemoteConnection
+    let isRegular: Bool
+    let connect: () -> Void
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: isRegular ? 14 : 12) {
+            Button(action: connect) {
+                HStack(spacing: isRegular ? 14 : 12) {
+                    Image(systemName: "globe")
+                        .font(isRegular ? .title3 : .body)
+                        .foregroundColor(.blue)
+                        .frame(width: isRegular ? 34 : 28)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(connection.name)
+                            .font(isRegular ? .body.weight(.semibold) : .body.weight(.medium))
+                            .foregroundColor(.primary)
+                        Text(connection.urlString)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(Color(UIColor.tertiaryLabel))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button(action: remove) {
+                Image(systemName: "trash")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove saved remote connection")
+        }
+        .padding(isRegular ? 14 : 12)
     }
 }

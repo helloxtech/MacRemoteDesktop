@@ -132,8 +132,9 @@ On the Mac:
 On iPhone or iPad:
 1. Choose **Remote** connection mode.
 2. Tap **Scan QR Code** and scan the code shown on the Mac.
+3. After the first successful connection, reconnect from **Saved Remote Access** without scanning again.
 
-Free Cloudflare tunnels are best-effort. The relay URL can change, and speed or availability may be limited.
+Keep Remote Access turned on on the Mac to keep the saved link active. Free Cloudflare tunnels are best-effort, so speed or availability may be limited.
 
 ---
 

@@ -53,7 +53,7 @@ enum ConnectionMode: String, CaseIterable, Identifiable {
         case .airDesk:
             return "Connect to a Mac on the same Wi-Fi using AirDesk streaming and pairing."
         case .remoteAccess:
-            return "Use this when your iPhone is away from the same Wi-Fi as your Mac. Scan the QR code shown on your Mac to fill in the details."
+            return "Use this when your iPhone is away from the same Wi-Fi as your Mac. Scan once, then reconnect from the saved Mac."
         case .vnc:
             return "Compatibility mode for Macs with Screen Sharing or another VNC server enabled."
         }

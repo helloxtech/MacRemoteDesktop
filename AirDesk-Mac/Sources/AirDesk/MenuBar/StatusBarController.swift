@@ -83,7 +83,7 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         copyTunnelURLItem.isHidden = true
         showTunnelQRCodeItem = NSMenuItem(title: "Show Connect QR Code...", action: #selector(showTunnelQRCode), keyEquivalent: "")
         showTunnelQRCodeItem.isHidden = true
-        tunnelNoticeItem = NSMenuItem(title: "Note: Free tunnel relay can be slower, unavailable, or change URL.", action: nil, keyEquivalent: "")
+        tunnelNoticeItem = NSMenuItem(title: "Note: Keep Remote Access on to keep this link active.", action: nil, keyEquivalent: "")
         tunnelNoticeItem.isEnabled = false
         tunnelNoticeItem.isHidden = true
         permissionSummaryItem = NSMenuItem(title: "Setup: Checking...", action: nil, keyEquivalent: "")
@@ -185,7 +185,12 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         }
 
         pairing.codeDidChange = { [weak self] code in
-            self?.pairingCodeItem.title = "Pairing Code: \(code)"
+            DispatchQueue.main.async {
+                self?.pairingCodeItem.title = "Pairing Code: \(code)"
+                if self?.qrPanel != nil, self?.currentTunnelURL != nil {
+                    self?.showTunnelQRCode()
+                }
+            }
         }
     }
 
@@ -221,7 +226,7 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
     private func confirmRemoteAccessNotice() -> Bool {
         let alert = NSAlert()
         alert.messageText = "Remote Access may be slower"
-        alert.informativeText = "Remote Access lets you connect when you are away from the same Wi-Fi. It may be slower or stop working sometimes. If that happens, try again later or connect on the same Wi-Fi."
+        alert.informativeText = "Remote Access lets you connect when you are away from the same Wi-Fi. Scan once from your iPhone to save this Mac for next time. Keep Remote Access on to keep the same link active."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Turn On Remote Access")
         alert.addButton(withTitle: "Not Now")
@@ -312,7 +317,7 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
 
         let messageText = setupLink == nil
             ? "Keep this window open. The QR code will appear as soon as the secure link is ready."
-            : "Open AirDesk on iPhone and scan this QR code. It includes the current tunnel URL and pairing code."
+            : "Open AirDesk on iPhone and scan this QR code. After the first successful connection, the iPhone saves this Mac for next time."
         let messageLabel = NSTextField(wrappingLabelWithString: messageText)
         messageLabel.alignment = .center
         messageLabel.font = .systemFont(ofSize: 15, weight: .regular)

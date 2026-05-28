@@ -27,8 +27,8 @@
 | M-07 | Client disconnect | Disconnect iOS client | Count decrements correctly |
 | M-08 | Quit | Click "Quit AirDesk" | App terminates, server stops |
 | M-09 | Version shown | Click menu bar icon | Menu shows installed AirDesk version/build near the top |
-| M-10 | Check for updates current or no release | Click "Check for Updates..." when latest release is not newer, or before any release exists | User sees "AirDesk is up to date" or "No AirDesk release is available yet" |
-| M-11 | Update available badge | Mock or publish newer GitHub release, then check updates | Menu bar icon shows a small purple dot and menu shows "Update Available" |
+| M-10 | Check for updates current or no release | Click "Check for Updates..." when latest release is not newer, or before any release exists | User sees "AirDesk is up to date" or "No AirDesk release is available yet" in a frontmost update window |
+| M-11 | Update available prompt | Mock or publish newer GitHub release, then check updates | Update prompt is brought to the front instead of staying behind other windows |
 | M-12 | In-app update download | Click update download item when a downloadable release asset exists | Installer downloads to Downloads and app offers to open it or show it in Finder |
 | M-13 | Report issue | Click "Report Issue..." | Browser opens a GitHub issue form pre-filled with AirDesk version and macOS details |
 

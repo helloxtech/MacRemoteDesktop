@@ -10,11 +10,12 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
     private let statusItem: NSStatusItem
     private let menu: NSMenu
 #if !APP_STORE
-    private let updaterController = SPUStandardUpdaterController(
+    private lazy var updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
         updaterDelegate: nil,
-        userDriverDelegate: nil
+        userDriverDelegate: self
     )
+    private let updateFocusPlan = SparkleUpdateFocusPlan()
 #endif
     private var isSharing = false
 
@@ -105,6 +106,7 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         super.init()
 
 #if !APP_STORE
+        _ = updaterController
         checkForUpdatesItem.target = self
 #endif
         toggleItem.target = self
@@ -496,6 +498,30 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
 #if !APP_STORE
     @objc private func checkForUpdates() {
         updaterController.checkForUpdates(nil)
+        scheduleSparkleUpdateFocus()
+    }
+
+    private func scheduleSparkleUpdateFocus() {
+        for delay in updateFocusPlan.focusPassDelays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.bringSparkleUpdateWindowToFront()
+            }
+        }
+    }
+
+    private func bringSparkleUpdateWindowToFront() {
+        NSApp.activate(ignoringOtherApps: true)
+
+        let focusSelector = NSSelectorFromString("showUpdateInFocus")
+        let userDriver = updaterController.userDriver
+        if userDriver.responds(to: focusSelector) {
+            _ = userDriver.perform(focusSelector)
+        }
+
+        for window in NSApp.windows where updateFocusPlan.shouldPromoteWindow(title: window.title, isVisible: window.isVisible) {
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+        }
     }
 #endif
 
@@ -564,6 +590,19 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         openAccessibilityItem.isHidden = status.accessibility
     }
 }
+
+#if !APP_STORE
+extension StatusBarController: SPUStandardUserDriverDelegate {
+    func standardUserDriverWillHandleShowingUpdate(_ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState) {
+        guard handleShowingUpdate else { return }
+        scheduleSparkleUpdateFocus()
+    }
+
+    func standardUserDriverDidShowModalAlert() {
+        scheduleSparkleUpdateFocus()
+    }
+}
+#endif
 
 private enum AppVersion {
     static var short: String {

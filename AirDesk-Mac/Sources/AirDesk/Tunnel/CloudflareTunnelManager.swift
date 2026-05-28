@@ -6,7 +6,6 @@ class CloudflareTunnelManager {
     private let readinessQueue = DispatchQueue(label: "airdesk.cloudflare.readiness")
     private var readinessGate = TunnelURLReadinessGate()
     private var readinessProbe: TunnelWebSocketReadinessProbe?
-    private let maxReadinessProbeAttempts = 8
     var urlHandler: ((String?) -> Void)?
     var isRunning: Bool {
         process?.isRunning == true
@@ -105,18 +104,25 @@ class CloudflareTunnelManager {
                     return
                 }
 
-                guard attempt < self.maxReadinessProbeAttempts, self.isRunning else {
+                switch self.readinessGate.handleProbeFailure(for: url, tunnelIsRunning: self.isRunning) {
+                case .retry(let pendingURL):
                     self.readinessProbe = nil
-                    self.readinessGate.reset()
+                    let delay = self.readinessRetryDelay(after: attempt)
+                    self.readinessQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        self?.probeTunnelURL(pendingURL, attempt: attempt + 1)
+                    }
+                case .stop:
+                    self.readinessProbe = nil
                     DispatchQueue.main.async { [weak self] in self?.urlHandler?(nil) }
-                    return
-                }
-
-                self.readinessQueue.asyncAfter(deadline: .now() + 0.75) { [weak self] in
-                    self?.probeTunnelURL(url, attempt: attempt + 1)
+                case .ignore:
+                    self.readinessProbe = nil
                 }
             }
         }
+    }
+
+    private func readinessRetryDelay(after attempt: Int) -> TimeInterval {
+        min(4.0, max(1.0, Double(attempt) * 0.5))
     }
 
     private func publishReadyURL(_ url: String) {
@@ -168,6 +174,12 @@ enum TunnelURLReadinessAction: Equatable {
     case ignore
 }
 
+enum TunnelURLReadinessFailureAction: Equatable {
+    case retry(String)
+    case stop
+    case ignore
+}
+
 struct TunnelURLReadinessGate {
     private var candidateURL: String?
 
@@ -179,6 +191,15 @@ struct TunnelURLReadinessGate {
 
     func isWaitingFor(_ url: String) -> Bool {
         candidateURL == url
+    }
+
+    mutating func handleProbeFailure(for url: String, tunnelIsRunning: Bool) -> TunnelURLReadinessFailureAction {
+        guard candidateURL == url else { return .ignore }
+        guard tunnelIsRunning else {
+            candidateURL = nil
+            return .stop
+        }
+        return .retry(url)
     }
 
     mutating func publishIfReady(_ url: String) -> String? {

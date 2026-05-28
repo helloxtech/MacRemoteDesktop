@@ -5,6 +5,7 @@ struct RemoteTunnelReadinessGateTests {
     static func main() {
         testURLIsNotPublishedUntilProbeSucceeds()
         testStaleProbeSuccessIsIgnored()
+        testProbeFailureKeepsWaitingWhileTunnelIsRunning()
         print("RemoteTunnelReadinessGateTests passed")
     }
 
@@ -36,6 +37,20 @@ struct RemoteTunnelReadinessGateTests {
         }
         guard gate.publishIfReady(currentURL) == currentURL else {
             fatalError("Expected current URL to publish after readiness succeeds")
+        }
+    }
+
+    private static func testProbeFailureKeepsWaitingWhileTunnelIsRunning() {
+        var gate = TunnelURLReadinessGate()
+        let url = "https://slow-dns.trycloudflare.com"
+
+        _ = gate.registerCandidate(url)
+
+        guard gate.handleProbeFailure(for: url, tunnelIsRunning: true) == .retry(url) else {
+            fatalError("Expected a failed readiness probe to keep retrying while the tunnel process is running")
+        }
+        guard gate.publishIfReady(url) == url else {
+            fatalError("Expected the same URL to remain pending after a transient probe failure")
         }
     }
 }

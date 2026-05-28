@@ -111,6 +111,8 @@ class CloudflareTunnelManager {
                     self.readinessQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
                         self?.probeTunnelURL(pendingURL, attempt: attempt + 1)
                     }
+                case .publish(let pendingURL):
+                    self.publishReadyURL(pendingURL)
                 case .stop:
                     self.readinessProbe = nil
                     DispatchQueue.main.async { [weak self] in self?.urlHandler?(nil) }
@@ -176,16 +178,24 @@ enum TunnelURLReadinessAction: Equatable {
 
 enum TunnelURLReadinessFailureAction: Equatable {
     case retry(String)
+    case publish(String)
     case stop
     case ignore
 }
 
 struct TunnelURLReadinessGate {
+    private let maximumProbeFailuresBeforeFallback: Int
     private var candidateURL: String?
+    private var probeFailureCount = 0
+
+    init(maximumProbeFailuresBeforeFallback: Int = 3) {
+        self.maximumProbeFailuresBeforeFallback = max(1, maximumProbeFailuresBeforeFallback)
+    }
 
     mutating func registerCandidate(_ url: String) -> TunnelURLReadinessAction {
         guard candidateURL != url else { return .ignore }
         candidateURL = url
+        probeFailureCount = 0
         return .probe(url)
     }
 
@@ -197,7 +207,12 @@ struct TunnelURLReadinessGate {
         guard candidateURL == url else { return .ignore }
         guard tunnelIsRunning else {
             candidateURL = nil
+            probeFailureCount = 0
             return .stop
+        }
+        probeFailureCount += 1
+        guard probeFailureCount < maximumProbeFailuresBeforeFallback else {
+            return .publish(url)
         }
         return .retry(url)
     }
@@ -205,11 +220,13 @@ struct TunnelURLReadinessGate {
     mutating func publishIfReady(_ url: String) -> String? {
         guard candidateURL == url else { return nil }
         candidateURL = nil
+        probeFailureCount = 0
         return url
     }
 
     mutating func reset() {
         candidateURL = nil
+        probeFailureCount = 0
     }
 }
 

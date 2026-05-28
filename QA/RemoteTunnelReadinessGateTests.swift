@@ -6,6 +6,7 @@ struct RemoteTunnelReadinessGateTests {
         testURLIsNotPublishedUntilProbeSucceeds()
         testStaleProbeSuccessIsIgnored()
         testProbeFailureKeepsWaitingWhileTunnelIsRunning()
+        testRepeatedProbeFailuresFallBackToPublishingURL()
         print("RemoteTunnelReadinessGateTests passed")
     }
 
@@ -51,6 +52,23 @@ struct RemoteTunnelReadinessGateTests {
         }
         guard gate.publishIfReady(url) == url else {
             fatalError("Expected the same URL to remain pending after a transient probe failure")
+        }
+    }
+
+    private static func testRepeatedProbeFailuresFallBackToPublishingURL() {
+        var gate = TunnelURLReadinessGate(maximumProbeFailuresBeforeFallback: 3)
+        let url = "https://probe-blocked.trycloudflare.com"
+
+        _ = gate.registerCandidate(url)
+
+        guard gate.handleProbeFailure(for: url, tunnelIsRunning: true) == .retry(url) else {
+            fatalError("Expected the first failed readiness probe to retry")
+        }
+        guard gate.handleProbeFailure(for: url, tunnelIsRunning: true) == .retry(url) else {
+            fatalError("Expected the second failed readiness probe to retry")
+        }
+        guard gate.handleProbeFailure(for: url, tunnelIsRunning: true) == .publish(url) else {
+            fatalError("Expected repeated readiness failures to fall back to publishing the setup link")
         }
     }
 }

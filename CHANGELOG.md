@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Bumped Mac to `1.2.4 (22)` so Remote Access shows the QR setup link after a short bounded wait when Cloudflare gives a hostname but readiness probes keep failing.
 - Bumped Mac to `1.2.4 (21)` so Sparkle update windows are brought to the front when updates are shown from the menu bar app.
 - Bumped Mac to `1.2.4 (20)` so the Remote Access setup window stays open and keeps retrying while Cloudflare DNS prepares the new public tunnel hostname.
 - Bumped Mac to `1.2.4 (19)` and iOS to `1.2.4 (14)` so Remote Access QR codes wait for the Cloudflare tunnel to pass a WebSocket readiness check, while iOS keeps retrying until monitor info arrives instead of stopping after pairing.

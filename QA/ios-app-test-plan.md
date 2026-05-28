@@ -36,7 +36,7 @@
 | CF-05 | Reconnect on drop | Wi-Fi blip | Auto-reconnects with backoff |
 | CF-06 | Max reconnect attempts | Sustained disconnection | Stops retrying, shows error |
 | CF-07 | Remote tunnel connection | Paste active Mac tunnel URL and pairing code | Transitions to remote desktop view |
-| CF-07A | Remote QR connection | Scan the QR code shown by the Mac AirDesk menu | Tunnel URL and pairing code are applied and the app connects automatically |
+| CF-07A | Remote QR connection | Scan the QR code shown by the Mac AirDesk menu | Tunnel URL and pairing code are applied and the app connects automatically, retrying until monitor info arrives |
 | CF-07B | Remote saved connection | Tap a Saved Remote Access row while the Mac Remote Access tunnel is still active | App reconnects using the saved URL and saved pairing/trust details without opening the QR scanner |
 | CF-08 | First-time Local pairing prompt | Tap a Local Mac, or tap Connect Locally, on an iPhone that has no saved AirDesk trust token | Pairing Required sheet opens and asks for the six-digit Mac menu code before connecting |
 | CF-09 | Local pairing retry | Enter the correct six-digit code in the pairing sheet | App retries automatically and transitions to remote desktop view |

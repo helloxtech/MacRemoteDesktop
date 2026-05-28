@@ -15,12 +15,12 @@ class WebSocketClient: NSObject {
     private var task: URLSessionWebSocketTask?
     private var session: URLSession?
     private var reconnectAttempts = 0
-    private let maxReconnectAttempts = 5
     private var isReconnecting = false
     private var isIntentionallyClosed = false
     private var reconnectWorkItem: DispatchWorkItem?
     private var connectTimeoutWork: DispatchWorkItem?
     private var connectionGeneration = 0
+    private var connectionProgress = WebSocketConnectionProgress()
     private var hasSentConnectMessage = false
     private var requiresUserInitiatedReconnect = false
     private var lastLatencyCallbackValue: Int = -1
@@ -116,6 +116,7 @@ class WebSocketClient: NSObject {
         let generation = connectionGeneration
         hasSentConnectMessage = false
         requiresUserInitiatedReconnect = false
+        connectionProgress = WebSocketConnectionProgress()
 
         connectTimeoutWork?.cancel()
         connectTimeoutWork = nil
@@ -144,7 +145,7 @@ class WebSocketClient: NSObject {
             self?.handleDisconnectOnQueue(URLError(.timedOut), generation: generation)
         }
         connectTimeoutWork = timeout
-        stateQueue.asyncAfter(deadline: .now() + 10, execute: timeout)
+        stateQueue.asyncAfter(deadline: .now() + connectTimeoutInterval, execute: timeout)
     }
 
     private func sendConnectMessageOnQueue() {
@@ -224,8 +225,10 @@ class WebSocketClient: NSObject {
 
         switch type {
         case "screen_info":
+            _ = connectionProgress.screenInfoReceived()
             connectTimeoutWork?.cancel()
             connectTimeoutWork = nil
+            reconnectAttempts = 0
             if let msg = try? JSONDecoder().decode(ScreenInfoMessage.self, from: data) {
                 onMonitorsReceived?(msg.monitors)
             }
@@ -243,8 +246,11 @@ class WebSocketClient: NSObject {
             }
         case "pairing_status":
             if let msg = try? JSONDecoder().decode(PairingStatusMessage.self, from: data) {
-                connectTimeoutWork?.cancel()
-                connectTimeoutWork = nil
+                let progressAction = connectionProgress.pairingStatusReceived(paired: msg.paired)
+                if progressAction == .waitingForPairingCode {
+                    connectTimeoutWork?.cancel()
+                    connectTimeoutWork = nil
+                }
                 if msg.paired, let token = msg.authToken, !token.isEmpty {
                     AirDeskClientIdentity.storeSecret(token)
                 } else if !msg.paired {
@@ -302,7 +308,7 @@ class WebSocketClient: NSObject {
         guard reconnectAttempts < maxReconnectAttempts, !isReconnecting else { return false }
         isReconnecting = true
         reconnectAttempts += 1
-        let delay = Double(reconnectAttempts) * 2.0
+        let delay = reconnectDelay(for: reconnectAttempts)
         let generation = connectionGeneration
         onReconnectScheduled?(reconnectAttempts, delay)
 
@@ -316,6 +322,21 @@ class WebSocketClient: NSObject {
         reconnectWorkItem = workItem
         stateQueue.asyncAfter(deadline: .now() + delay, execute: workItem)
         return true
+    }
+
+    private var connectTimeoutInterval: TimeInterval {
+        endpointURL == nil ? 10 : 15
+    }
+
+    private var maxReconnectAttempts: Int {
+        endpointURL == nil ? 5 : 8
+    }
+
+    private func reconnectDelay(for attempt: Int) -> TimeInterval {
+        if endpointURL == nil {
+            return Double(attempt) * 2.0
+        }
+        return min(Double(attempt), 8.0)
     }
 }
 
@@ -355,8 +376,8 @@ extension WebSocketClient: URLSessionWebSocketDelegate {
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
         stateQueue.async { [weak self] in
             guard let self, webSocketTask === self.task else { return }
-            self.reconnectAttempts = 0
             self.isReconnecting = false
+            self.connectionProgress.webSocketDidOpen()
             AirDeskDiagnostics.shared.record("WebSocket opened to \(self.displayAddress)")
             self.sendConnectMessageOnQueue()
         }

@@ -243,13 +243,17 @@ class AppState: ObservableObject {
             Task { @MainActor in
                 AirDeskDiagnostics.shared.record("Disconnected: \(error?.localizedDescription ?? "clean")")
                 self?.resetConnectionState(keepSelectedHost: false)
-                self?.errorMessage = error?.localizedDescription
+                if request.mode == .remoteAccess, let error {
+                    self?.errorMessage = "Remote Access is still starting or unreachable. Keep AirDesk open on your Mac, then try again. \(error.localizedDescription)"
+                } else {
+                    self?.errorMessage = error?.localizedDescription
+                }
             }
         }
 
-        client.onReconnectScheduled = { [weak self] _, _ in
+        client.onReconnectScheduled = { [weak self] attempt, delay in
             Task { @MainActor in
-                AirDeskDiagnostics.shared.record("Reconnect scheduled")
+                AirDeskDiagnostics.shared.record("Reconnect scheduled in \(String(format: "%.1f", delay))s (attempt \(attempt))")
                 self?.connectionState = .reconnecting
             }
         }

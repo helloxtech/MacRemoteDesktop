@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Bumped Mac to `1.2.4 (19)` and iOS to `1.2.4 (14)` so Remote Access QR codes wait for the Cloudflare tunnel to pass a WebSocket readiness check, while iOS keeps retrying until monitor info arrives instead of stopping after pairing.
 - Bumped Mac to `1.2.4 (18)` and iOS to `1.2.4 (13)` for saved Remote Access reconnection, with successful Remote Access connections saved on iOS and the Mac pairing code kept stable unless the user explicitly regenerates or resets it.
 - Bumped iOS to `1.2.4 (12)` and simplified the Remote tab wording for non-technical users.
 - Bumped Mac to `1.2.4 (17)` and iOS to `1.2.4 (11)` for immediate Remote Access QR feedback, higher-contrast remote controls, and inline VNC Mac setup guidance.

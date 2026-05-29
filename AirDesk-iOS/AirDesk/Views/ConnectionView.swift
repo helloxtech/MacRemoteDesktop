@@ -141,6 +141,10 @@ struct ConnectionView: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
 
+                if draft.mode == .airDesk || draft.mode == .remoteAccess {
+                    macCompanionReminder
+                }
+
                 if draft.mode == .remoteAccess {
                     remoteAccessNotice
                     remoteAccessPlanSummary
@@ -155,6 +159,65 @@ struct ConnectionView: View {
             .cornerRadius(12)
         }
         .padding(.horizontal)
+    }
+
+    private var macCompanionReminder: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Mac app required", systemImage: "arrow.down.circle")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.blue)
+                Text("Local and Remote Access require the free AirDesk Mac Companion running on your Mac. VNC mode can use macOS Screen Sharing instead.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(spacing: 8) {
+                Button {
+                    openURL(macCompanionURL)
+                } label: {
+                    Label("Open Mac Download Page", systemImage: "safari")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                }
+
+                HStack(spacing: 8) {
+                    ShareLink(item: macCompanionURL) {
+                        Label("Share Link to Mac", systemImage: "square.and.arrow.up")
+                            .frame(maxWidth: .infinity)
+                    }
+
+                    Button {
+                        UIPasteboard.general.string = macCompanionURL.absoluteString
+                        macDownloadLinkStatus = "Copied"
+                    } label: {
+                        Label("Copy Link", systemImage: "doc.on.doc")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.bordered)
+
+                if let macDownloadLinkStatus {
+                    Text(macDownloadLinkStatus)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+            }
+        }
+        .padding(isRegular ? 14 : 12)
+        .background(Color.blue.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.blue.opacity(0.18), lineWidth: 1)
+        )
+        .cornerRadius(12)
     }
 
     private var vncSetupGuide: some View {
@@ -241,66 +304,14 @@ struct ConnectionView: View {
             }
 
             if appState.discoveredHosts.isEmpty {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(spacing: 10) {
-                        ProgressView().scaleEffect(0.8)
-                        Text("Scanning local network...")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .center)
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("Need the Mac app?", systemImage: "arrow.down.circle")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(.blue)
-                        Text("Install the free AirDesk Mac Companion, then open it on your Mac and start sharing.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    VStack(spacing: 8) {
-                        Button {
-                            openURL(macCompanionURL)
-                        } label: {
-                            Label("Open Download Page", systemImage: "safari")
-                                .font(.subheadline.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(Color.blue)
-                                .foregroundColor(.white)
-                                .cornerRadius(10)
-                        }
-
-                        HStack(spacing: 8) {
-                            ShareLink(item: macCompanionURL) {
-                                Label("Share Link to Mac", systemImage: "square.and.arrow.up")
-                                    .frame(maxWidth: .infinity)
-                            }
-
-                            Button {
-                                UIPasteboard.general.string = macCompanionURL.absoluteString
-                                macDownloadLinkStatus = "Copied"
-                            } label: {
-                                Label("Copy Link", systemImage: "doc.on.doc")
-                                    .frame(maxWidth: .infinity)
-                            }
-                        }
-                        .font(.caption.weight(.semibold))
-                        .buttonStyle(.bordered)
-
-                        if let macDownloadLinkStatus {
-                            Text(macDownloadLinkStatus)
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                        }
-                    }
+                HStack(spacing: 10) {
+                    ProgressView().scaleEffect(0.8)
+                    Text("Scanning local network...")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
                 }
-                .padding(isRegular ? 16 : 14)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 20)
                 .background(Color(.secondarySystemGroupedBackground))
                 .cornerRadius(12)
             } else {

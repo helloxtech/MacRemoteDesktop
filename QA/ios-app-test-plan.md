@@ -15,13 +15,14 @@
 | C-06 | Invalid IP | Enter invalid IP, tap Connect | Error message shown |
 | C-07 | Wrong port | Enter correct IP, wrong port | Connection fails gracefully, error shown |
 | C-08 | Discovery loading state | Before any Mac found | Spinner shown with "Scanning local network..." |
-| C-08A | Mac companion download guidance | Open Local mode with no nearby Macs found | The screen shows a Mac companion download explanation with Open Download Page, Share Link to Mac, and Copy Link actions |
+| C-08A | Local Mac companion reminder | Select Local mode | The screen shows a Mac companion download explanation with Open Mac Download Page, Share Link to Mac, and Copy Link actions |
 | C-09 | Remote mode notice | Select Remote mode | Remote mode explains that a successful scan is saved for next time |
 | C-10 | Remote URL normalization | Enter a https trycloudflare.com URL | App connects with secure WebSocket tunnel URL |
 | C-11 | Invalid remote URL | Enter invalid Remote URL, tap Connect Remotely | Error message shown |
 | C-12 | Connection modes | Open the connection mode picker | Modes are labeled Local, Remote, and VNC |
 | C-13 | Local mode copy | Select Local mode | Helper text explains same-Wi-Fi AirDesk streaming and pairing |
 | C-14 | Remote QR scanner | Select Remote mode, tap Scan QR Code | Camera scanner opens and can be cancelled |
+| C-14A | Remote Mac companion reminder | Select Remote mode | The screen shows that Remote Access requires the free Mac companion and offers the download/share/copy link actions |
 | C-15 | Saved Remote Access row | Connect successfully through a Remote QR code, disconnect, then return to Remote mode | Saved Remote Access shows the Mac and can be tapped to reconnect without scanning |
 | C-16 | Free plan Remote Access gate | Select Remote mode on a device without an active subscription | Remote Access shows Free, Pro, and Power plans; scan/connect actions require Pro or Power |
 | C-17 | Remote Access monthly limit | Use Remote Access until the active plan's monthly hours are exhausted | App stops/blocks Remote Access and prompts the user to upgrade or wait for next month |

@@ -15,6 +15,7 @@
 | C-06 | Invalid IP | Enter invalid IP, tap Connect | Error message shown |
 | C-07 | Wrong port | Enter correct IP, wrong port | Connection fails gracefully, error shown |
 | C-08 | Discovery loading state | Before any Mac found | Spinner shown with "Scanning local network..." |
+| C-08A | Mac companion download guidance | Open Local mode with no nearby Macs found | The screen shows a Mac companion download explanation with Open Download Page, Share Link to Mac, and Copy Link actions |
 | C-09 | Remote mode notice | Select Remote mode | Remote mode explains that a successful scan is saved for next time |
 | C-10 | Remote URL normalization | Enter a https trycloudflare.com URL | App connects with secure WebSocket tunnel URL |
 | C-11 | Invalid remote URL | Enter invalid Remote URL, tap Connect Remotely | Error message shown |

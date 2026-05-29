@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added iOS local-discovery guidance that links users to the free Mac companion download page when no nearby Macs are found.
 - Bumped iOS to `1.2.6 (16)` and Mac to `1.2.5 (23)` so Remote Access tunnel clients must use iOS `1.2.5` or later, failed connections can send diagnostics from the app, and unexpected prior-session exits are reported to HelloX Admin on the next launch.
 - Bumped iOS to `1.2.5 (15)` for Remote Access Free, Pro, and Power plans, with Pro including 20 remote hours per month and Power including 100 remote hours per month.
 - Bumped Mac to `1.2.4 (22)` so Remote Access shows the QR setup link after a short bounded wait when Cloudflare gives a hostname but readiness probes keep failing.

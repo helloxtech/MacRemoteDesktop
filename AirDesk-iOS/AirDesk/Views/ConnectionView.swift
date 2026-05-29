@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ConnectionView: View {
     private enum FocusField: Hashable {
@@ -15,10 +16,13 @@ struct ConnectionView: View {
     @State private var diagnosticsExport: DiagnosticsExport?
     @State private var issueReportStatus: String?
     @State private var isShowingQRCodeScanner = false
+    @State private var macDownloadLinkStatus: String?
     @State private var pairingCodePrompt = ""
     @FocusState private var focusedField: FocusField?
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.openURL) private var openURL
 
+    private let macCompanionURL = URL(string: "https://hellox.ca/products/airdesk/")!
     private var isRegular: Bool { sizeClass == .regular }
     private var isConnectButtonDisabled: Bool {
         switch draft.mode {
@@ -237,14 +241,66 @@ struct ConnectionView: View {
             }
 
             if appState.discoveredHosts.isEmpty {
-                HStack {
-                    ProgressView().scaleEffect(0.8)
-                    Text("Scanning local network...")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 10) {
+                        ProgressView().scaleEffect(0.8)
+                        Text("Scanning local network...")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Need the Mac app?", systemImage: "arrow.down.circle")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.blue)
+                        Text("Install the free AirDesk Mac Companion, then open it on your Mac and start sharing.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    VStack(spacing: 8) {
+                        Button {
+                            openURL(macCompanionURL)
+                        } label: {
+                            Label("Open Download Page", systemImage: "safari")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                .background(Color.blue)
+                                .foregroundColor(.white)
+                                .cornerRadius(10)
+                        }
+
+                        HStack(spacing: 8) {
+                            ShareLink(item: macCompanionURL) {
+                                Label("Share Link to Mac", systemImage: "square.and.arrow.up")
+                                    .frame(maxWidth: .infinity)
+                            }
+
+                            Button {
+                                UIPasteboard.general.string = macCompanionURL.absoluteString
+                                macDownloadLinkStatus = "Copied"
+                            } label: {
+                                Label("Copy Link", systemImage: "doc.on.doc")
+                                    .frame(maxWidth: .infinity)
+                            }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.bordered)
+
+                        if let macDownloadLinkStatus {
+                            Text(macDownloadLinkStatus)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                        }
+                    }
                 }
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 20)
+                .padding(isRegular ? 16 : 14)
                 .background(Color(.secondarySystemGroupedBackground))
                 .cornerRadius(12)
             } else {

@@ -22,6 +22,7 @@
 - Update `CHANGELOG.md` for user-facing behavior changes.
 - Keep QA notes in `QA/` aligned with new connection modes.
 - Do not commit credentials, tokens, generated tunnel URLs, or private device identifiers.
+- Before any App Store, TestFlight, Mac direct-download, or HelloX website release, read `RELEASE_TODO.md` if it exists. Treat every unchecked item as release-blocking unless the user explicitly removes or defers it. Complete the item, verify it, then remove it from `RELEASE_TODO.md`; delete the file when all items are done.
 
 ## Verification
 

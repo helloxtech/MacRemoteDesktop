@@ -88,7 +88,12 @@ final class ScreenCaptureManager: NSObject, @unchecked Sendable {
     }
 
     func currentMonitorInfos() -> [MonitorInfo] {
-        captureQueue.sync { monitorInfos }
+        captureQueue.sync {
+            if !monitorInfos.isEmpty {
+                return monitorInfos
+            }
+            return Self.fallbackMonitorInfos()
+        }
     }
 
     private func beginCapture(generation: Int) async {
@@ -217,6 +222,25 @@ final class ScreenCaptureManager: NSObject, @unchecked Sendable {
         var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
         CGGetActiveDisplayList(count, &displays, &count)
         return Array(displays.prefix(Int(count))).sorted()
+    }
+
+    private static func fallbackMonitorInfos() -> [MonitorInfo] {
+        let displayIDs = activeDisplayIDs()
+        let scaleByDisplayID = scaleFactorsByDisplayID()
+
+        return displayIDs.enumerated().compactMap { index, displayID in
+            let width = CGDisplayPixelsWide(displayID)
+            let height = CGDisplayPixelsHigh(displayID)
+            guard width > 0, height > 0 else { return nil }
+            let scale = scaleByDisplayID[displayID] ?? 1.0
+            return MonitorInfo(
+                id: index,
+                width: width,
+                height: height,
+                scaleFactor: Float(scale),
+                name: "Display \(index + 1)"
+            )
+        }
     }
 
     private static func scaleFactorsByDisplayID() -> [CGDirectDisplayID: CGFloat] {

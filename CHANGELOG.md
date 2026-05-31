@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Bumped iOS to `1.2.7 (17)` and Mac to `1.2.6 (24)` for the friendly Remote Access connection states and automatic failure reports.
+- Added rate-limited automatic HelloX Admin issue reports for iOS connection failures and Mac Remote Access tunnel failures, including safe diagnostic context and recent app events.
+- Fixed first-scan Remote Access retries so iOS stays on the Connecting screen until a session has actually connected, extends the Cloudflare tunnel retry window, and the Mac sends display metadata even while ScreenCaptureKit is still starting.
+- Improved iOS scan, connect, and reconnect waiting states with visible progress, plain-language status, and QR scanner guidance instead of blank black screens.
 - Added iOS Local and Remote Access reminders that link users to the free Mac companion download page while keeping VNC guidance separate.
 - Bumped iOS to `1.2.6 (16)` and Mac to `1.2.5 (23)` so Remote Access tunnel clients must use iOS `1.2.5` or later, failed connections can send diagnostics from the app, and unexpected prior-session exits are reported to HelloX Admin on the next launch.
 - Bumped iOS to `1.2.5 (15)` for Remote Access Free, Pro, and Power plans, with Pro including 20 remote hours per month and Power including 100 remote hours per month.

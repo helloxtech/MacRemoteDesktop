@@ -429,6 +429,7 @@ final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable 
     private func sendScreenInfo(to connection: NWConnection) {
         guard isAuthorized(connection) else { return }
         let monitors = monitorInfoProvider?() ?? []
+        AirDeskDiagnostics.shared.record("Sending screen info with \(monitors.count) monitor(s)")
         let msg = ScreenInfoMessage(monitors: monitors)
         guard let data = try? JSONEncoder().encode(msg),
               let text = String(data: data, encoding: .utf8) else { return }

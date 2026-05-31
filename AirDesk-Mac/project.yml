@@ -33,8 +33,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.helloxtech.airdesk.mac
-        MARKETING_VERSION: 1.2.5
-        CURRENT_PROJECT_VERSION: 23
+        MARKETING_VERSION: 1.2.6
+        CURRENT_PROJECT_VERSION: 24
         SWIFT_VERSION: 5.9
         INFOPLIST_FILE: Info.plist
         CODE_SIGN_ENTITLEMENTS: AirDesk.entitlements

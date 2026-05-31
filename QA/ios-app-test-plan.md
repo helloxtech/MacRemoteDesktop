@@ -21,13 +21,14 @@
 | C-11 | Invalid remote URL | Enter invalid Remote URL, tap Connect Remotely | Error message shown |
 | C-12 | Connection modes | Open the connection mode picker | Modes are labeled Local, Remote, and VNC |
 | C-13 | Local mode copy | Select Local mode | Helper text explains same-Wi-Fi AirDesk streaming and pairing |
-| C-14 | Remote QR scanner | Select Remote mode, tap Scan QR Code | Camera scanner opens and can be cancelled |
+| C-14 | Remote QR scanner | Select Remote mode, tap Scan QR Code | Camera scanner opens with camera preparation progress, scan guidance, and a cancellable navigation bar |
 | C-14A | Remote Mac companion reminder | Select Remote mode | The screen shows that Remote Access requires the free Mac companion and offers the download/share/copy link actions |
 | C-15 | Saved Remote Access row | Connect successfully through a Remote QR code, disconnect, then return to Remote mode | Saved Remote Access shows the Mac and can be tapped to reconnect without scanning |
 | C-16 | Free plan Remote Access gate | Select Remote mode on a device without an active subscription | Remote Access shows Free, Pro, and Power plans; scan/connect actions require Pro or Power |
 | C-17 | Remote Access monthly limit | Use Remote Access until the active plan's monthly hours are exhausted | App stops/blocks Remote Access and prompts the user to upgrade or wait for next month |
 | C-18 | Report connection issue | Trigger any visible connection error, then tap Report Issue | App sends recent diagnostics to HelloX Admin and shows a sent status |
 | C-19 | Unexpected exit report | Force quit or crash the app, then reopen it | Next launch records the prior unexpected exit and sends a crash-recovery report |
+| C-20 | Automatic connection failure report | Trigger a Local, Remote, or VNC connection failure and do not tap Report Issue | App automatically sends a rate-limited HelloX Admin issue report with safe endpoint, plan, permission, state, and recent-event context |
 
 ---
 
@@ -35,18 +36,20 @@
 
 | ID | Test Case | Steps | Expected Result |
 |----|-----------|-------|-----------------|
-| CF-01 | Connecting state | Tap Mac in list | "Connecting to [name]..." spinner shown |
+| CF-01 | Connecting state | Tap Mac in list | A status card shows progress, current connection step, and a Cancel action |
 | CF-02 | Cancel while connecting | Tap Cancel | Returns to connection screen |
 | CF-03 | Successful connection | Valid Mac running AirDesk | Transitions to remote desktop view |
 | CF-04 | Connection refused | Mac AirDesk not sharing | Error shown, returns to connection screen |
-| CF-05 | Reconnect on drop | Wi-Fi blip | Auto-reconnects with backoff |
+| CF-05 | Reconnect on drop | Wi-Fi blip | Auto-reconnects with backoff and shows a centered recovery status overlay |
 | CF-06 | Max reconnect attempts | Sustained disconnection | Stops retrying, shows error |
 | CF-07 | Remote tunnel connection | Paste active Mac tunnel URL and pairing code | Transitions to remote desktop view |
-| CF-07A | Remote QR connection | Scan the QR code shown by the Mac AirDesk menu | Tunnel URL and pairing code are applied and the app connects automatically, retrying until monitor info arrives |
+| CF-07A | Remote QR connection | Scan the QR code shown by the Mac AirDesk menu | Tunnel URL and pairing code are applied and the app connects automatically, retrying on the Connecting screen until monitor info arrives |
+| CF-07C | First Remote retry copy | Scan a QR code while the tunnel is slow to answer, before any monitor info has arrived | App stays on the Connecting screen instead of saying Reconnecting before the first successful session |
 | CF-07B | Remote saved connection | Tap a Saved Remote Access row while the Mac Remote Access tunnel is still active | App reconnects using the saved URL and saved pairing/trust details without opening the QR scanner |
 | CF-08 | First-time Local pairing prompt | Tap a Local Mac, or tap Connect Locally, on an iPhone that has no saved AirDesk trust token | Pairing Required sheet opens and asks for the six-digit Mac menu code before connecting |
 | CF-09 | Local pairing retry | Enter the correct six-digit code in the pairing sheet | App retries automatically and transitions to remote desktop view |
 | CF-10 | Incomplete pairing code | Enter fewer than six digits in the pairing sheet | Connect action remains disabled |
+| CF-11 | Automatic Remote failure diagnostics | Scan a Remote QR code while the tunnel is unreachable until retry attempts are exhausted | App shows a friendly failure state and HelloX Admin receives one throttled `remote_access_connection_failure` report with recent events |
 
 ---
 

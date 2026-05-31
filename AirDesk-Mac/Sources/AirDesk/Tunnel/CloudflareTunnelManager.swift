@@ -1,14 +1,43 @@
 import Foundation
 
+protocol TunnelDiagnosticsReporting {
+    func record(_ message: String)
+    func uploadAutomaticIssueReport(
+        action: String,
+        reason: String,
+        errorMessage: String,
+        context: [String: Any]
+    )
+}
+
+struct NoopTunnelDiagnosticsReporter: TunnelDiagnosticsReporting {
+    func record(_ message: String) {}
+
+    func uploadAutomaticIssueReport(
+        action: String,
+        reason: String,
+        errorMessage: String,
+        context: [String: Any]
+    ) {}
+}
+
 class CloudflareTunnelManager {
 
     private var process: Process?
     private let readinessQueue = DispatchQueue(label: "airdesk.cloudflare.readiness")
+    private let outputQueue = DispatchQueue(label: "airdesk.cloudflare.output")
+    private let diagnostics: TunnelDiagnosticsReporting
     private var readinessGate = TunnelURLReadinessGate()
     private var readinessProbe: TunnelWebSocketReadinessProbe?
+    private var isStopping = false
+    private var recentOutputLines: [String] = []
     var urlHandler: ((String?) -> Void)?
     var isRunning: Bool {
         process?.isRunning == true
+    }
+
+    init(diagnostics: TunnelDiagnosticsReporting = NoopTunnelDiagnosticsReporter()) {
+        self.diagnostics = diagnostics
     }
 
     private var cloudflaredURLs: [URL] {
@@ -27,8 +56,18 @@ class CloudflareTunnelManager {
     @discardableResult
     func start(localPort: UInt16 = 7890) -> Bool {
         guard !isRunning else { return true }
+        isStopping = false
+        resetRecentOutput()
         guard let binaryURL = cloudflaredURLs.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
-            print("CloudflareTunnelManager: cloudflared helper not found or not executable")
+            let message = "Cloudflare tunnel helper was not found or was not executable."
+            print("CloudflareTunnelManager: \(message)")
+            diagnostics.record("Cloudflare tunnel helper missing")
+            diagnostics.uploadAutomaticIssueReport(
+                action: "remote_access_start_failed",
+                reason: "tunnel_helper_missing",
+                errorMessage: message,
+                context: tunnelDiagnosticsContext(localPort: localPort)
+            )
             urlHandler?(nil)
             return false
         }
@@ -44,29 +83,60 @@ class CloudflareTunnelManager {
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
+            self?.appendTunnelOutput(output)
             if let url = self?.extractURL(from: output) {
                 self?.publishURLWhenReady(url)
             }
         }
 
-        proc.terminationHandler = { [weak self] _ in
-            self?.resetReadiness()
-            DispatchQueue.main.async { self?.urlHandler?(nil) }
+        proc.terminationHandler = { [weak self] terminatedProcess in
+            guard let self else { return }
+            let wasStopping = self.isStopping
+            self.isStopping = false
+            self.resetReadiness()
+            if !wasStopping {
+                let message = "Cloudflare tunnel exited with status \(terminatedProcess.terminationStatus)."
+                self.diagnostics.record(message)
+                self.diagnostics.uploadAutomaticIssueReport(
+                    action: "remote_access_tunnel_exited",
+                    reason: "tunnel_process_exited",
+                    errorMessage: message,
+                    context: self.tunnelDiagnosticsContext(
+                        localPort: localPort,
+                        binaryURL: binaryURL,
+                        extra: [
+                            "terminationStatus": Int(terminatedProcess.terminationStatus),
+                            "terminationReason": String(describing: terminatedProcess.terminationReason)
+                        ]
+                    )
+                )
+            }
+            DispatchQueue.main.async { self.urlHandler?(nil) }
         }
 
         do {
             try proc.run()
         } catch {
-            print("CloudflareTunnelManager: failed to start cloudflared: \(error)")
+            let message = "Cloudflare tunnel process could not start. \(error.localizedDescription)"
+            print("CloudflareTunnelManager: \(message)")
+            diagnostics.record("Cloudflare tunnel process start failed: \(error.localizedDescription)")
+            diagnostics.uploadAutomaticIssueReport(
+                action: "remote_access_start_failed",
+                reason: "tunnel_process_start_failed",
+                errorMessage: message,
+                context: tunnelDiagnosticsContext(localPort: localPort, binaryURL: binaryURL)
+            )
             urlHandler?(nil)
             return false
         }
         self.process = proc
+        diagnostics.record("Cloudflare tunnel started using \(binaryURL.path)")
         print("CloudflareTunnelManager: started cloudflared at \(binaryURL.path)")
         return true
     }
 
     func stop() {
+        isStopping = true
         resetReadiness()
         process?.terminate()
         process = nil
@@ -142,6 +212,54 @@ class CloudflareTunnelManager {
         }
     }
 
+    private func resetRecentOutput() {
+        outputQueue.sync {
+            recentOutputLines = []
+        }
+    }
+
+    private func appendTunnelOutput(_ output: String) {
+        let lines = output
+            .split(whereSeparator: \.isNewline)
+            .map { Self.redactedTunnelOutputLine(String($0)) }
+            .filter { !$0.isEmpty }
+
+        guard !lines.isEmpty else { return }
+
+        outputQueue.async { [weak self] in
+            guard let self else { return }
+            self.recentOutputLines.append(contentsOf: lines)
+            if self.recentOutputLines.count > 20 {
+                self.recentOutputLines.removeFirst(self.recentOutputLines.count - 20)
+            }
+        }
+    }
+
+    private func tunnelDiagnosticsContext(
+        localPort: UInt16,
+        binaryURL: URL? = nil,
+        extra: [String: Any] = [:]
+    ) -> [String: Any] {
+        var outputSnapshot: [String] = []
+        outputQueue.sync {
+            outputSnapshot = recentOutputLines
+        }
+
+        var context: [String: Any] = [
+            "localPort": Int(localPort),
+            "tunnelIsRunning": isRunning,
+            "candidatePaths": cloudflaredURLs.map(\.path),
+            "recentTunnelOutput": outputSnapshot
+        ]
+
+        if let binaryURL {
+            context["binaryPath"] = binaryURL.path
+        }
+
+        extra.forEach { context[$0.key] = $0.value }
+        return context
+    }
+
     private static func webSocketProbeURL(from tunnelURL: String) -> URL? {
         guard var components = URLComponents(string: tunnelURL),
               let scheme = components.scheme?.lowercased() else {
@@ -168,6 +286,25 @@ class CloudflareTunnelManager {
             }
         }
         return nil
+    }
+
+    private static func redactedTunnelOutputLine(_ line: String) -> String {
+        line.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(
+                of: "Bearer\\s+[A-Za-z0-9._~+/=-]+",
+                with: "Bearer [redacted]",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: "https?://[^\\s\"'<>]+",
+                with: "[url]",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b",
+                with: "[email]",
+                options: .regularExpression
+            )
     }
 }
 

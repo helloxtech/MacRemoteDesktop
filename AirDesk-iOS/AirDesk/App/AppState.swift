@@ -10,6 +10,17 @@ enum ConnectionState: Equatable {
     case connected
 }
 
+private extension ConnectionState {
+    var diagnosticsValue: String {
+        switch self {
+        case .disconnected: return "disconnected"
+        case .connecting: return "connecting"
+        case .reconnecting: return "reconnecting"
+        case .connected: return "connected"
+        }
+    }
+}
+
 /// Thread-safe frame relay — delivers CVPixelBuffers directly to renderers
 /// without routing through @MainActor. Prevents pixel buffer pool exhaustion
 /// when the main thread is busy (keyboard animation, SwiftUI layout, screen switch).
@@ -262,20 +273,31 @@ class AppState: ObservableObject {
 
         client.onDisconnect = { [weak self] error in
             Task { @MainActor in
+                guard let self else { return }
                 AirDeskDiagnostics.shared.record("Disconnected: \(error?.localizedDescription ?? "clean")")
-                self?.resetConnectionState(keepSelectedHost: false)
+                self.uploadAutomaticConnectionFailureReport(error: error, request: request)
+                self.resetConnectionState(keepSelectedHost: false)
                 if request.mode == .remoteAccess, let error {
-                    self?.errorMessage = "Remote Access is still starting or unreachable. Keep AirDesk open on your Mac, then try again. \(error.localizedDescription)"
+                    self.errorMessage = "Remote Access is still starting or unreachable. Keep AirDesk open on your Mac, then try again. \(error.localizedDescription)"
                 } else {
-                    self?.errorMessage = error?.localizedDescription
+                    self.errorMessage = error?.localizedDescription
                 }
             }
         }
 
-        client.onReconnectScheduled = { [weak self] attempt, delay in
+        client.onReconnectScheduled = { [weak self] attempt, delay, hasCompletedConnection in
             Task { @MainActor in
-                AirDeskDiagnostics.shared.record("Reconnect scheduled in \(String(format: "%.1f", delay))s (attempt \(attempt))")
-                self?.connectionState = .reconnecting
+                guard let self else { return }
+                let retryPresentation = ConnectionRetryPresentation.state(
+                    hasCompletedConnection: hasCompletedConnection,
+                    isAlreadyConnected: self.connectionState == .connected,
+                    isAlreadyReconnecting: self.connectionState == .reconnecting,
+                    hasMonitorInfo: !self.monitors.isEmpty
+                )
+                let shouldShowReconnect = retryPresentation == .reconnecting
+                let label = shouldShowReconnect ? "Reconnect" : "Connect retry"
+                AirDeskDiagnostics.shared.record("\(label) scheduled in \(String(format: "%.1f", delay))s (attempt \(attempt))")
+                self.connectionState = shouldShowReconnect ? .reconnecting : .connecting
             }
         }
 
@@ -428,6 +450,9 @@ class AppState: ObservableObject {
                 case .disconnected:
                     let userFacingMessage = controller.userFacingError(from: error)
                     let shouldDisplay = controller.shouldDisplay(error: error)
+                    if shouldDisplay {
+                        self.uploadAutomaticConnectionFailureReport(error: error, request: request)
+                    }
                     self.resetConnectionState(keepSelectedHost: false)
                     if shouldDisplay {
                         self.errorMessage = userFacingMessage
@@ -539,6 +564,75 @@ class AppState: ObservableObject {
         if monitors.contains(where: { $0.id == activeMonitorIndex }) {
             webSocketClient?.requestStream(displayIndex: activeMonitorIndex)
         }
+    }
+
+    private func uploadAutomaticConnectionFailureReport(error: Error?, request: ConnectionRequest) {
+        guard let error else { return }
+
+        let reason: String
+        let errorMessage: String
+        switch request.mode {
+        case .remoteAccess:
+            reason = "remote_access_connection_failure"
+            errorMessage = "Remote Access connection failed before AirDesk iOS received usable screen information. \(error.localizedDescription)"
+        case .airDesk:
+            reason = "airdesk_connection_failure"
+            errorMessage = "Local AirDesk connection failed. \(error.localizedDescription)"
+        case .vnc:
+            reason = "vnc_connection_failure"
+            errorMessage = "VNC connection failed. \(error.localizedDescription)"
+        }
+
+        AirDeskDiagnostics.shared.uploadAutomaticIssueReport(
+            action: "connection_failure",
+            reason: reason,
+            errorMessage: errorMessage,
+            context: connectionFailureContext(request: request)
+        )
+    }
+
+    private func connectionFailureContext(request: ConnectionRequest) -> [String: Any] {
+        let usageSummary = remoteAccessUsageSummary()
+        var context: [String: Any] = [
+            "connectionMode": request.mode.rawValue,
+            "hostName": request.host.name,
+            "endpointHost": request.host.host,
+            "endpointPort": request.host.port,
+            "hasPairingCode": request.pairingCode?.isEmpty == false,
+            "hasVNCUsername": request.vncUsername?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+            "hasVNCPassword": request.vncPassword?.isEmpty == false,
+            "selectedHostName": selectedHost?.name ?? "",
+            "sessionMode": sessionMode?.rawValue ?? "",
+            "connectionState": connectionState.diagnosticsValue,
+            "monitorCount": monitors.count,
+            "activeMonitorIndex": activeMonitorIndex,
+            "latencyMs": latencyMs,
+            "decodedFPS": decodedFPS,
+            "isHostLocked": isHostLocked,
+            "hostStatusMessage": hostStatusMessage ?? "",
+            "savedRemoteConnectionCount": remoteConnectionStore.connections.count,
+            "remoteAccessPlan": usageSummary.plan.rawValue,
+            "remoteAccessUsedSeconds": usageSummary.usedSeconds,
+            "remoteAccessRemainingSeconds": usageSummary.remainingSeconds,
+            "remoteAccessCanStart": usageSummary.canStart,
+            "permissionStatus": [
+                "screenRecording": permissionStatus.screenRecording,
+                "accessibility": permissionStatus.accessibility,
+                "canView": permissionStatus.canView,
+                "canControl": permissionStatus.canControl,
+                "message": permissionStatus.message
+            ]
+        ]
+
+        if let remoteURL = request.remoteWebSocketURL {
+            context["remoteEndpointScheme"] = remoteURL.scheme ?? ""
+            context["remoteEndpointHost"] = remoteURL.host ?? ""
+            context["remoteEndpointPort"] = remoteURL.port ?? (remoteURL.scheme == "ws" ? 80 : 443)
+            context["remoteEndpointPathPresent"] = !remoteURL.path.isEmpty && remoteURL.path != "/"
+            context["remoteEndpointQueryPresent"] = remoteURL.query?.isEmpty == false
+        }
+
+        return context
     }
 
     private func saveRemoteConnectionIfNeeded(_ request: ConnectionRequest) {

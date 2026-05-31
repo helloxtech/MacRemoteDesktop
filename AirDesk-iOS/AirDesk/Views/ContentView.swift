@@ -41,7 +41,7 @@ struct ContentView: View {
         } else {
             ZStack(alignment: .top) {
                 RemoteDesktopView()
-                ReconnectingBanner()
+                ConnectionStatusOverlay(kind: .reconnecting)
             }
         }
     }
@@ -51,40 +51,95 @@ struct ConnectingView: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
+        let kind: ConnectionStatusKind = appState.sessionMode == .remoteAccess ? .remoteConnecting : .localConnecting
         ZStack {
-            Color.black.ignoresSafeArea()
-            VStack(spacing: 20) {
-                ProgressView()
-                    .scaleEffect(1.5)
-                    .tint(.white)
-                Text("Connecting to \(appState.selectedHost?.name ?? "Mac")...")
-                    .foregroundColor(.white)
-                    .font(.headline)
-                Button("Cancel") { appState.disconnect() }
-                    .foregroundColor(.gray)
-            }
+            Color(.systemGroupedBackground).ignoresSafeArea()
+            ConnectionStatusCard(
+                content: ConnectionStatusPresentation.content(
+                    for: kind,
+                    hostName: appState.selectedHost?.name
+                ),
+                showsCancel: true,
+                cancel: { appState.disconnect() }
+            )
+            .padding(.horizontal, 24)
         }
     }
 }
 
-struct ReconnectingBanner: View {
+struct ConnectionStatusOverlay: View {
     @EnvironmentObject var appState: AppState
+    let kind: ConnectionStatusKind
 
     var body: some View {
-        HStack(spacing: 10) {
-            ProgressView()
-                .tint(.white)
-            Text("Reconnecting...")
-                .font(.subheadline.weight(.semibold))
-                .foregroundColor(.white)
-            Button("Cancel") { appState.disconnect() }
-                .font(.subheadline.weight(.semibold))
-                .foregroundColor(.white.opacity(0.82))
+        ZStack {
+            Color.black.opacity(0.38)
+                .ignoresSafeArea()
+            ConnectionStatusCard(
+                content: ConnectionStatusPresentation.content(
+                    for: kind,
+                    hostName: appState.selectedHost?.name
+                ),
+                showsCancel: true,
+                cancel: { appState.disconnect() }
+            )
+            .padding(.horizontal, 24)
         }
-        .padding(.horizontal, 14)
-        .frame(height: 44)
-        .background(Color.black.opacity(0.82))
-        .clipShape(Capsule())
-        .padding(.top, 56)
+    }
+}
+
+private struct ConnectionStatusCard: View {
+    let content: ConnectionStatusContent
+    let showsCancel: Bool
+    let cancel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 18) {
+            ProgressView()
+                .scaleEffect(1.35)
+                .tint(.blue)
+                .padding(.bottom, 2)
+
+            VStack(spacing: 8) {
+                Text(content.title)
+                    .font(.title3.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.primary)
+
+                Text(content.message)
+                    .font(.subheadline)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(content.steps.enumerated()), id: \.offset) { index, step in
+                    HStack(spacing: 10) {
+                        Image(systemName: index == 0 ? "arrow.triangle.2.circlepath" : "circle")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(index == 0 ? .blue : .secondary.opacity(0.65))
+                        Text(step)
+                            .font(.subheadline.weight(index == 0 ? .semibold : .regular))
+                            .foregroundColor(index == 0 ? .primary : .secondary)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(Color(.tertiarySystemGroupedBackground))
+            .cornerRadius(10)
+
+            if showsCancel {
+                Button("Cancel", action: cancel)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.blue)
+            }
+        }
+        .padding(22)
+        .frame(maxWidth: 420)
+        .background(Color(.secondarySystemGroupedBackground))
+        .cornerRadius(16)
+        .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 8)
     }
 }

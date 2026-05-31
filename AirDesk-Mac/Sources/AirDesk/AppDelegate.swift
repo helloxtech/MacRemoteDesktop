@@ -21,7 +21,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         webSocketServer = WebSocketServer(port: 7890)
         screenCaptureManager = ScreenCaptureManager()
         bonjourAdvertiser = BonjourAdvertiser(port: 7890)
-        cloudflareTunnelManager = CloudflareTunnelManager()
+        cloudflareTunnelManager = CloudflareTunnelManager(diagnostics: AirDeskTunnelDiagnosticsReporter())
         clipboardManager = ClipboardManager()
         pairingManager = PairingManager()
 
@@ -69,6 +69,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         bonjourAdvertiser.stop()
         cloudflareTunnelManager.stop()
         clipboardManager.stop()
+    }
+}
+
+private struct AirDeskTunnelDiagnosticsReporter: TunnelDiagnosticsReporting {
+    func record(_ message: String) {
+        AirDeskDiagnostics.shared.record(message)
+    }
+
+    func uploadAutomaticIssueReport(
+        action: String,
+        reason: String,
+        errorMessage: String,
+        context: [String: Any]
+    ) {
+        AirDeskDiagnostics.shared.uploadAutomaticIssueReport(
+            action: action,
+            reason: reason,
+            errorMessage: errorMessage,
+            context: context
+        )
     }
 }
 

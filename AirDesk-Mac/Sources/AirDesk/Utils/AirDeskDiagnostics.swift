@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import AirDeskProtocol
 
 final class AirDeskDiagnostics {
     static let shared = AirDeskDiagnostics()
@@ -10,6 +11,7 @@ final class AirDeskDiagnostics {
     private let cleanShutdownKey = "airdesk.diagnostics.cleanShutdown"
     private let persistedEventsKey = "airdesk.diagnostics.events.v1"
     private let installationIDKey = "airdesk.diagnostics.installationID.v1"
+    private let automaticIssueReportLastSentKeyPrefix = "airdesk.diagnostics.automaticIssueReport.lastSent"
     private let issueReportURL = URL(string: "https://hellox.ca/api/app-issue-report")!
 
     private init() {
@@ -135,6 +137,35 @@ final class AirDeskDiagnostics {
         }.resume()
     }
 
+    func uploadAutomaticIssueReport(
+        action: String,
+        reason: String,
+        severity: String = "error",
+        errorMessage: String,
+        context: [String: Any] = [:],
+        throttleInterval: TimeInterval = 10 * 60
+    ) {
+        let now = Date()
+        let throttle = AutomaticIssueReportThrottle(interval: throttleInterval)
+        let lastSentKey = automaticIssueReportLastSentKey(for: reason)
+        let lastSentAt = UserDefaults.standard.object(forKey: lastSentKey) as? Date
+
+        guard throttle.shouldSend(lastSentAt: lastSentAt, now: now) else {
+            record("Automatic issue report throttled: \(reason)")
+            return
+        }
+
+        UserDefaults.standard.set(now, forKey: lastSentKey)
+        record("Automatic issue report requested: \(reason)")
+        uploadIssueReport(
+            action: action,
+            reason: reason,
+            severity: severity,
+            errorMessage: errorMessage,
+            context: context
+        )
+    }
+
     private func contextSnapshot(reason: String, extraContext: [String: Any]) -> [String: Any] {
         var snapshot: [String] = []
         queue.sync { snapshot = events }
@@ -154,6 +185,15 @@ final class AirDeskDiagnostics {
         ]
         extraContext.forEach { context[$0.key] = $0.value }
         return context
+    }
+
+    private func automaticIssueReportLastSentKey(for reason: String) -> String {
+        let safeReason = reason.replacingOccurrences(
+            of: "[^A-Za-z0-9_.-]",
+            with: "_",
+            options: .regularExpression
+        )
+        return "\(automaticIssueReportLastSentKeyPrefix).\(safeReason)"
     }
 
     private static func timestamp() -> String {

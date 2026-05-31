@@ -21,6 +21,7 @@ class WebSocketClient: NSObject {
     private var connectTimeoutWork: DispatchWorkItem?
     private var connectionGeneration = 0
     private var connectionProgress = WebSocketConnectionProgress()
+    private var hasEverCompletedConnection = false
     private var hasSentConnectMessage = false
     private var requiresUserInitiatedReconnect = false
     private var lastLatencyCallbackValue: Int = -1
@@ -31,7 +32,7 @@ class WebSocketClient: NSObject {
     // timestampMs added so AppState can compute latency
     var onVideoFrame: ((Data, Int, Bool, UInt32, Int) -> Void)?
     var onDisconnect: ((Error?) -> Void)?
-    var onReconnectScheduled: ((Int, TimeInterval) -> Void)?
+    var onReconnectScheduled: ((Int, TimeInterval, Bool) -> Void)?
     var onClipboardChanged: ((String) -> Void)?
     var onLatencyUpdate: ((Int) -> Void)?
     var onLockStatusChanged: ((Bool, String) -> Void)?
@@ -111,6 +112,7 @@ class WebSocketClient: NSObject {
     private func connectAttemptOnQueue(resetRetryCount: Bool) {
         if resetRetryCount {
             reconnectAttempts = 0
+            hasEverCompletedConnection = false
         }
         connectionGeneration += 1
         let generation = connectionGeneration
@@ -226,6 +228,7 @@ class WebSocketClient: NSObject {
         switch type {
         case "screen_info":
             _ = connectionProgress.screenInfoReceived()
+            hasEverCompletedConnection = true
             connectTimeoutWork?.cancel()
             connectTimeoutWork = nil
             reconnectAttempts = 0
@@ -310,7 +313,7 @@ class WebSocketClient: NSObject {
         reconnectAttempts += 1
         let delay = reconnectDelay(for: reconnectAttempts)
         let generation = connectionGeneration
-        onReconnectScheduled?(reconnectAttempts, delay)
+        onReconnectScheduled?(reconnectAttempts, delay, hasEverCompletedConnection)
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -325,11 +328,11 @@ class WebSocketClient: NSObject {
     }
 
     private var connectTimeoutInterval: TimeInterval {
-        endpointURL == nil ? 10 : 15
+        endpointURL == nil ? 10 : 20
     }
 
     private var maxReconnectAttempts: Int {
-        endpointURL == nil ? 5 : 8
+        endpointURL == nil ? 5 : 20
     }
 
     private func reconnectDelay(for attempt: Int) -> TimeInterval {

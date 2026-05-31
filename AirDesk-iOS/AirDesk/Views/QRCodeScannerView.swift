@@ -4,6 +4,7 @@ import SwiftUI
 struct QRCodeScannerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var errorMessage: String?
+    @State private var isCameraPreviewReady = false
 
     let onCode: (String) -> Void
 
@@ -15,13 +16,18 @@ struct QRCodeScannerSheet: View {
                         dismiss()
                         onCode(code)
                     },
+                    onReady: {
+                        isCameraPreviewReady = true
+                    },
                     onError: { message in
                         errorMessage = message
                     }
                 )
                 .ignoresSafeArea(edges: .bottom)
 
+                scannerGuidance
                 scannerFrame
+                loadingOverlay
 
                 if let errorMessage {
                     VStack {
@@ -57,14 +63,53 @@ struct QRCodeScannerSheet: View {
             .frame(width: 250, height: 250)
             .shadow(color: .black.opacity(0.35), radius: 12)
     }
+
+    private var scannerGuidance: some View {
+        VStack {
+            Spacer()
+            Text("Point the camera at the QR code shown by AirDesk on your Mac.")
+                .font(.callout.weight(.medium))
+                .multilineTextAlignment(.center)
+                .foregroundColor(.white)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+                .background(Color.black.opacity(0.64))
+                .cornerRadius(14)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 46)
+        }
+    }
+
+    @ViewBuilder
+    private var loadingOverlay: some View {
+        if !isCameraPreviewReady && errorMessage == nil {
+            VStack(spacing: 14) {
+                ProgressView()
+                    .scaleEffect(1.25)
+                    .tint(.white)
+                Text("Preparing camera...")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                Text("The scanner will appear here in a moment.")
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.82))
+                    .multilineTextAlignment(.center)
+            }
+            .padding(20)
+            .frame(width: 250, height: 250)
+            .background(Color.black.opacity(0.76))
+            .cornerRadius(18)
+        }
+    }
 }
 
 private struct QRCodeScannerView: UIViewControllerRepresentable {
     let onCode: (String) -> Void
+    let onReady: () -> Void
     let onError: (String) -> Void
 
     func makeUIViewController(context: Context) -> QRScannerViewController {
-        QRScannerViewController(onCode: onCode, onError: onError)
+        QRScannerViewController(onCode: onCode, onReady: onReady, onError: onError)
     }
 
     func updateUIViewController(_ uiViewController: QRScannerViewController, context: Context) {}
@@ -78,10 +123,12 @@ private final class QRScannerViewController: UIViewController, AVCaptureMetadata
     private var hasCompletedScan = false
 
     private let onCode: (String) -> Void
+    private let onReady: () -> Void
     private let onError: (String) -> Void
 
-    init(onCode: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
+    init(onCode: @escaping (String) -> Void, onReady: @escaping () -> Void, onError: @escaping (String) -> Void) {
         self.onCode = onCode
+        self.onReady = onReady
         self.onError = onError
         super.init(nibName: nil, bundle: nil)
     }
@@ -167,9 +214,12 @@ private final class QRScannerViewController: UIViewController, AVCaptureMetadata
     }
 
     private func startSession() {
-        sessionQueue.async { [session] in
+        sessionQueue.async { [session, onReady] in
             guard !session.isRunning else { return }
             session.startRunning()
+            DispatchQueue.main.async {
+                onReady()
+            }
         }
     }
 

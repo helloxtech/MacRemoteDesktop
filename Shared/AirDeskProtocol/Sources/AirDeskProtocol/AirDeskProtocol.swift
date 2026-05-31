@@ -91,6 +91,19 @@ public struct AirDeskAppVersion: Comparable, Sendable {
     }
 }
 
+public struct AutomaticIssueReportThrottle: Sendable {
+    public let interval: TimeInterval
+
+    public init(interval: TimeInterval) {
+        self.interval = max(0, interval)
+    }
+
+    public func shouldSend(lastSentAt: Date?, now: Date = Date()) -> Bool {
+        guard let lastSentAt else { return true }
+        return now.timeIntervalSince(lastSentAt) >= interval
+    }
+}
+
 public struct PairingStatusMessage: Codable, Sendable {
     public let type: String
     public let paired: Bool

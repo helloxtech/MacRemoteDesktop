@@ -185,6 +185,11 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
                 }
             }
         }
+        tunnel.failureHandler = { [weak self] failure in
+            DispatchQueue.main.async {
+                self?.showTunnelQRCodeFailurePanel(failure)
+            }
+        }
 
         pairing.codeDidChange = { [weak self] code in
             DispatchQueue.main.async {
@@ -213,15 +218,19 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
             tunnel.stop()
         } else {
             guard confirmRemoteAccessNotice() else { return }
-            tunnelToggleItem.title = "Starting Remote Access..."
-            tunnelNoticeItem.isHidden = false
-            shouldShowTunnelQRCodeWhenReady = true
-            showTunnelQRCodeStartingPanel()
-            if !tunnel.start() {
-                shouldShowTunnelQRCodeWhenReady = false
-                closeTunnelQRCodePanel()
-                showTunnelStartFailed()
-            }
+            beginRemoteAccess()
+        }
+    }
+
+    private func beginRemoteAccess() {
+        tunnelToggleItem.title = "Starting Remote Access..."
+        tunnelNoticeItem.isHidden = false
+        shouldShowTunnelQRCodeWhenReady = true
+        showTunnelQRCodeStartingPanel()
+        if !tunnel.start() {
+            shouldShowTunnelQRCodeWhenReady = false
+            closeTunnelQRCodePanel()
+            showTunnelStartFailed()
         }
     }
 
@@ -268,7 +277,7 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         qrPanel?.close()
         currentSetupLinkForPanel = setupLink
 
-        let panel = makeTunnelQRCodePanel(setupLink: setupLink)
+        let panel = makeTunnelQRCodePanel(state: .ready(setupLink))
         qrPanel = panel
         NSApp.activate(ignoringOtherApps: true)
         panel.center()
@@ -279,14 +288,25 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         qrPanel?.close()
         currentSetupLinkForPanel = nil
 
-        let panel = makeTunnelQRCodePanel(setupLink: nil)
+        let panel = makeTunnelQRCodePanel(state: .starting)
         qrPanel = panel
         NSApp.activate(ignoringOtherApps: true)
         panel.center()
         panel.makeKeyAndOrderFront(nil)
     }
 
-    private func makeTunnelQRCodePanel(setupLink: String?) -> NSPanel {
+    private func showTunnelQRCodeFailurePanel(_ failure: CloudflareTunnelFailure) {
+        qrPanel?.close()
+        currentSetupLinkForPanel = nil
+
+        let panel = makeTunnelQRCodePanel(state: .failed(failure))
+        qrPanel = panel
+        NSApp.activate(ignoringOtherApps: true)
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    private func makeTunnelQRCodePanel(state: RemoteAccessSetupPanelState) -> NSPanel {
         let contentSize = NSSize(width: 392, height: 620)
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: contentSize),
@@ -294,7 +314,7 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        panel.title = setupLink == nil ? "Starting Remote Access" : "Scan to Connect"
+        panel.title = state.windowTitle
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.isReleasedWhenClosed = false
@@ -319,15 +339,12 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
             appIconView.heightAnchor.constraint(equalToConstant: 64)
         ])
 
-        let titleLabel = NSTextField(labelWithString: setupLink == nil ? "Starting Remote Access" : "Scan to Connect")
+        let titleLabel = NSTextField(labelWithString: state.title)
         titleLabel.alignment = .center
         titleLabel.font = .systemFont(ofSize: 24, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
 
-        let messageText = setupLink == nil
-            ? "Keep this window open. The QR code will appear as soon as the secure link is ready."
-            : "Open AirDesk on iPhone and scan this QR code. After the first successful connection, the iPhone saves this Mac for next time."
-        let messageLabel = NSTextField(wrappingLabelWithString: messageText)
+        let messageLabel = NSTextField(wrappingLabelWithString: state.message)
         messageLabel.alignment = .center
         messageLabel.font = .systemFont(ofSize: 15, weight: .regular)
         messageLabel.textColor = .secondaryLabelColor
@@ -336,7 +353,7 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         messageLabel.widthAnchor.constraint(equalToConstant: 320).isActive = true
 
         let qrView: NSView
-        if let setupLink, let qrImage = QRCodeGenerator.image(for: setupLink, size: 232) {
+        if case let .ready(setupLink) = state, let qrImage = QRCodeGenerator.image(for: setupLink, size: 232) {
             let imageView = NSImageView(image: qrImage)
             imageView.imageScaling = .scaleProportionallyUpOrDown
             imageView.translatesAutoresizingMaskIntoConstraints = false
@@ -345,7 +362,7 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
                 imageView.heightAnchor.constraint(equalToConstant: 232)
             ])
             qrView = imageView
-        } else if setupLink == nil {
+        } else if case .starting = state {
             let progress = NSProgressIndicator()
             progress.style = .spinning
             progress.controlSize = .large
@@ -369,6 +386,31 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
                 placeholderStack.heightAnchor.constraint(equalToConstant: 232)
             ])
             qrView = placeholderStack
+        } else if case .failed = state {
+            let icon = NSImageView(image: NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Remote Access warning") ?? NSImage())
+            icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 56, weight: .regular)
+            icon.contentTintColor = .systemOrange
+            icon.translatesAutoresizingMaskIntoConstraints = false
+
+            let statusLabel = NSTextField(wrappingLabelWithString: "No setup link was created.")
+            statusLabel.alignment = .center
+            statusLabel.font = .systemFont(ofSize: 15, weight: .medium)
+            statusLabel.textColor = .secondaryLabelColor
+            statusLabel.translatesAutoresizingMaskIntoConstraints = false
+            statusLabel.widthAnchor.constraint(equalToConstant: 220).isActive = true
+
+            let placeholderStack = NSStackView(views: [icon, statusLabel])
+            placeholderStack.orientation = .vertical
+            placeholderStack.alignment = .centerX
+            placeholderStack.spacing = 14
+            placeholderStack.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                icon.widthAnchor.constraint(equalToConstant: 72),
+                icon.heightAnchor.constraint(equalToConstant: 72),
+                placeholderStack.widthAnchor.constraint(equalToConstant: 232),
+                placeholderStack.heightAnchor.constraint(equalToConstant: 232)
+            ])
+            qrView = placeholderStack
         } else {
             let fallbackLabel = NSTextField(wrappingLabelWithString: "QR code could not be generated. Use Copy Setup Link instead.")
             fallbackLabel.alignment = .center
@@ -386,11 +428,11 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         pairingLabel.font = .monospacedDigitSystemFont(ofSize: 17, weight: .semibold)
         pairingLabel.lineBreakMode = .byTruncatingTail
 
-        let copyButton = NSButton(title: setupLink == nil ? "Preparing Setup Link..." : "Copy Setup Link", target: self, action: #selector(copyRemoteSetupLinkFromPanel))
+        let copyButton = NSButton(title: state.primaryButtonTitle, target: self, action: state.primaryButtonAction)
         copyButton.bezelStyle = .rounded
         copyButton.controlSize = .large
         copyButton.keyEquivalent = "\r"
-        copyButton.isEnabled = setupLink != nil
+        copyButton.isEnabled = state.primaryButtonEnabled
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             copyButton.widthAnchor.constraint(equalToConstant: 320),
@@ -430,11 +472,18 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         return panel
     }
 
-    @objc private func copyRemoteSetupLinkFromPanel() {
+    @objc fileprivate func copyRemoteSetupLinkFromPanel() {
         guard let currentSetupLinkForPanel else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(currentSetupLinkForPanel, forType: .string)
+    }
+
+    @objc fileprivate func retryRemoteAccessFromPanel() {
+        closeTunnelQRCodePanel()
+        if !isSharing { startSharing() }
+        guard isSharing else { return }
+        beginRemoteAccess()
     }
 
     @objc private func closeTunnelQRCodePanel() {
@@ -643,6 +692,76 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         accessibilityItem.title = "Keyboard & Mouse: \(status.accessibility ? "Granted" : "Missing")"
         openScreenRecordingItem.isHidden = status.screenRecording
         openAccessibilityItem.isHidden = status.accessibility
+    }
+}
+
+private enum RemoteAccessSetupPanelState {
+    case starting
+    case ready(String)
+    case failed(CloudflareTunnelFailure)
+
+    var windowTitle: String {
+        switch self {
+        case .starting:
+            return "Starting Remote Access"
+        case .ready:
+            return "Scan to Connect"
+        case .failed:
+            return "Remote Access Needs Retry"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .starting:
+            return "Starting Remote Access"
+        case .ready:
+            return "Scan to Connect"
+        case .failed(let failure):
+            return failure.title
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .starting:
+            return "Keep this window open. The QR code will appear as soon as the secure link is ready."
+        case .ready:
+            return "Open AirDesk on iPhone and scan this QR code. After the first successful connection, the iPhone saves this Mac for next time."
+        case .failed(let failure):
+            return failure.message
+        }
+    }
+
+    var primaryButtonTitle: String {
+        switch self {
+        case .starting:
+            return "Preparing Setup Link..."
+        case .ready:
+            return "Copy Setup Link"
+        case .failed:
+            return "Try Again"
+        }
+    }
+
+    var primaryButtonEnabled: Bool {
+        switch self {
+        case .starting:
+            return false
+        case .ready, .failed:
+            return true
+        }
+    }
+
+    var primaryButtonAction: Selector? {
+        switch self {
+        case .starting:
+            return nil
+        case .ready:
+            return #selector(StatusBarController.copyRemoteSetupLinkFromPanel)
+        case .failed:
+            return #selector(StatusBarController.retryRemoteAccessFromPanel)
+        }
     }
 }
 

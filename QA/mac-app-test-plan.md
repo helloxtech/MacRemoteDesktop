@@ -106,8 +106,9 @@
 | CF-04 | Tunnel stop | Stop sharing | cloudflared process terminated |
 | CF-05 | Remote access notice | Enable tunnel | User sees that scanning once saves the Mac and that Remote Access should stay on to keep the link active |
 | CF-06 | Copy tunnel URL | Start tunnel, click Copy Tunnel URL | Active tunnel URL is copied to clipboard |
-| CF-07 | QR setup link | Start tunnel, show QR code | Starting panel stays open while Cloudflare DNS prepares the hostname; QR appears after the public tunnel URL passes a WebSocket readiness check, or after a short bounded wait if readiness probes remain inconclusive, then encodes an `airdesk://connect` link with tunnel URL and pairing code |
+| CF-07 | QR setup link | Start tunnel, show QR code | Starting panel stays open while Cloudflare DNS prepares the hostname; QR appears after the public tunnel URL has a DNS address record, then encodes an `airdesk://connect` link with tunnel URL and pairing code |
 | CF-08 | Stable pairing code | Pair an iPhone through Remote Access, then reopen the AirDesk menu | Pairing code remains the same unless Regenerate Pairing Code or Reset Trusted Devices is used |
 | CF-09 | Remote Access client version gate | Connect to the tunnel through an iOS client older than 1.2.5 | Mac rejects the tunnel connection and asks the user to update the iOS app |
 | CF-10 | Mac issue report | Trigger a Remote Access start failure or use Report Issue from the menu | AirDesk sends a diagnostics report to HelloX Admin and shows the report ID |
 | CF-11 | Automatic tunnel failure report | Trigger missing helper, tunnel process start failure, or unexpected cloudflared exit without clicking Report Issue | AirDesk automatically sends one throttled HelloX Admin issue report with helper paths, local port, termination details when available, redacted tunnel output, permissions, and recent app events |
+| CF-12 | Cloudflare rate limit | Trigger a Cloudflare Quick Tunnel `429 Too Many Requests` response | Setup window stays user-facing and explains the temporary Cloudflare limit instead of silently closing or repeatedly creating new tunnels |

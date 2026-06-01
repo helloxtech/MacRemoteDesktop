@@ -6,10 +6,11 @@ struct RemoteTunnelReadinessGateTests {
         testURLIsNotPublishedUntilProbeSucceeds()
         testStaleProbeSuccessIsIgnored()
         testProbeFailureKeepsWaitingWhileTunnelIsRunning()
-        testRepeatedProbeFailuresRestartTheTunnel()
-        testRegisteringNewCandidateResetsRestartThreshold()
+        testRepeatedProbeFailuresKeepSameTunnel()
+        testRegisteringNewCandidateResetsFailureHandling()
         testDNSReadinessAcceptsIPv6Answer()
         testDNSReadinessRejectsNoAddressAnswers()
+        testRateLimitOutputCreatesUserFacingFailure()
         print("RemoteTunnelReadinessGateTests passed")
     }
 
@@ -58,8 +59,8 @@ struct RemoteTunnelReadinessGateTests {
         }
     }
 
-    private static func testRepeatedProbeFailuresRestartTheTunnel() {
-        var gate = TunnelURLReadinessGate(maximumProbeFailuresBeforeRestart: 3)
+    private static func testRepeatedProbeFailuresKeepSameTunnel() {
+        var gate = TunnelURLReadinessGate()
         let url = "https://probe-blocked.trycloudflare.com"
 
         _ = gate.registerCandidate(url)
@@ -70,13 +71,13 @@ struct RemoteTunnelReadinessGateTests {
         guard gate.handleProbeFailure(for: url, tunnelIsRunning: true) == .retry(url) else {
             fatalError("Expected the second failed readiness probe to retry")
         }
-        guard gate.handleProbeFailure(for: url, tunnelIsRunning: true) == .restart(url) else {
-            fatalError("Expected repeated readiness failures to restart the tunnel instead of waiting forever")
+        guard gate.handleProbeFailure(for: url, tunnelIsRunning: true) == .retry(url) else {
+            fatalError("Expected repeated readiness failures to keep the same quick tunnel URL instead of creating new tunnels")
         }
     }
 
-    private static func testRegisteringNewCandidateResetsRestartThreshold() {
-        var gate = TunnelURLReadinessGate(maximumProbeFailuresBeforeRestart: 2)
+    private static func testRegisteringNewCandidateResetsFailureHandling() {
+        var gate = TunnelURLReadinessGate()
         let firstURL = "https://first.trycloudflare.com"
         let secondURL = "https://second.trycloudflare.com"
 
@@ -89,10 +90,7 @@ struct RemoteTunnelReadinessGateTests {
         _ = gate.registerCandidate(secondURL)
 
         guard gate.handleProbeFailure(for: secondURL, tunnelIsRunning: true) == .retry(secondURL) else {
-            fatalError("Expected a new candidate URL to reset the failure count")
-        }
-        guard gate.handleProbeFailure(for: secondURL, tunnelIsRunning: true) == .restart(secondURL) else {
-            fatalError("Expected the reset threshold to apply to the new candidate URL")
+            fatalError("Expected a new candidate URL to retry independently")
         }
     }
 
@@ -123,6 +121,19 @@ struct RemoteTunnelReadinessGateTests {
 
         guard !TunnelDNSReadinessPayload.containsAddressRecord(payload) else {
             fatalError("Expected a DNS response without A or AAAA answers to remain not ready")
+        }
+    }
+
+    private static func testRateLimitOutputCreatesUserFacingFailure() {
+        let failure = CloudflareTunnelOutputFailureDetector.failure(from: [
+            #"ERR Error unmarshaling QuickTunnel response: error code: 1015 status_code="429 Too Many Requests""#
+        ])
+
+        guard failure?.reason == "quick_tunnel_rate_limited" else {
+            fatalError("Expected Cloudflare 429 output to create a specific rate-limit failure")
+        }
+        guard failure?.message.contains("Wait a few minutes") == true else {
+            fatalError("Expected rate-limit failure to include a user-facing retry instruction")
         }
     }
 }

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Bumped Mac to `1.2.10 (28)` and changed Remote Access so slow readiness checks no longer create new Cloudflare Quick Tunnel links in a loop, preventing `429 Too Many Requests` rate limits and showing a clear retry message when Cloudflare temporarily refuses new setup links.
 - Bumped Mac to `1.2.9 (27)` so Remote Access checks Cloudflare DNS before opening the secure WebSocket, avoiding macOS negative DNS caching that could keep the QR setup window stuck on "Creating secure link..."
 - Bumped Mac to `1.2.8 (26)` so Remote Access automatically restarts the Cloudflare tunnel when a setup link never becomes DNS-ready, preventing the "Creating secure link..." setup panel from spinning forever.
 - Bumped Mac to `1.2.7 (25)` and kept Remote Access setup links hidden until the Cloudflare secure WebSocket opens, preventing iPhone scans of DNS-dead tunnel URLs that stall at "Opening secure link."

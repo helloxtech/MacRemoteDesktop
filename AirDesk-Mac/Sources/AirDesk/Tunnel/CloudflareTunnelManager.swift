@@ -29,12 +29,12 @@ class CloudflareTunnelManager {
     private let diagnostics: TunnelDiagnosticsReporting
     private var readinessGate = TunnelURLReadinessGate()
     private var dnsReadinessProbe: TunnelDNSReadinessProbe?
-    private var readinessProbe: TunnelWebSocketReadinessProbe?
     private var isStopping = false
-    private var isRestartingAfterUnreadyURL = false
     private var activeLocalPort: UInt16 = 7890
     private var recentOutputLines: [String] = []
+    private var detectedFailure: CloudflareTunnelFailure?
     var urlHandler: ((String?) -> Void)?
+    var failureHandler: ((CloudflareTunnelFailure) -> Void)?
     var isRunning: Bool {
         process?.isRunning == true
     }
@@ -96,26 +96,19 @@ class CloudflareTunnelManager {
         proc.terminationHandler = { [weak self] terminatedProcess in
             guard let self else { return }
             let wasStopping = self.isStopping
-            let shouldRestart = self.isRestartingAfterUnreadyURL && !wasStopping
             self.isStopping = false
-            self.isRestartingAfterUnreadyURL = false
             self.process = nil
             self.resetReadiness()
-            if shouldRestart {
-                let message = "Cloudflare tunnel exited with status \(terminatedProcess.terminationStatus) while refreshing an unreachable setup link; restarting."
-                self.diagnostics.record(message)
-                DispatchQueue.main.async { [weak self] in
-                    _ = self?.start(localPort: localPort)
-                }
-                return
-            }
+            let detectedFailure = self.detectedTunnelFailure(status: terminatedProcess.terminationStatus)
             if !wasStopping {
                 let message = "Cloudflare tunnel exited with status \(terminatedProcess.terminationStatus)."
+                let reportReason = detectedFailure?.reason ?? "tunnel_process_exited"
+                let reportMessage = detectedFailure.map { "\(message) \($0.message)" } ?? message
                 self.diagnostics.record(message)
                 self.diagnostics.uploadAutomaticIssueReport(
                     action: "remote_access_tunnel_exited",
-                    reason: "tunnel_process_exited",
-                    errorMessage: message,
+                    reason: reportReason,
+                    errorMessage: reportMessage,
                     context: self.tunnelDiagnosticsContext(
                         localPort: localPort,
                         binaryURL: binaryURL,
@@ -126,7 +119,12 @@ class CloudflareTunnelManager {
                     )
                 )
             }
-            DispatchQueue.main.async { self.urlHandler?(nil) }
+            DispatchQueue.main.async {
+                self.urlHandler?(nil)
+                if !wasStopping, let detectedFailure {
+                    self.failureHandler?(detectedFailure)
+                }
+            }
         }
 
         do {
@@ -173,7 +171,7 @@ class CloudflareTunnelManager {
 
     private func waitForTunnelDNS(_ url: String, attempt: Int) {
         guard let host = Self.tunnelHost(from: url) else {
-            probeTunnelURL(url, attempt: 1)
+            publishReadyURL(url)
             return
         }
 
@@ -187,7 +185,7 @@ class CloudflareTunnelManager {
                 self.dnsReadinessProbe = nil
 
                 if isReady {
-                    self.probeTunnelURL(url, attempt: 1)
+                    self.publishReadyURL(url)
                     return
                 }
 
@@ -199,50 +197,8 @@ class CloudflareTunnelManager {
                     }
                 case .stop:
                     DispatchQueue.main.async { [weak self] in self?.urlHandler?(nil) }
-                case .restart(let pendingURL):
-                    self.readinessGate.reset()
-                    self.restartTunnelAfterUnreadyURL(pendingURL)
                 case .ignore:
                     break
-                }
-            }
-        }
-    }
-
-    private func probeTunnelURL(_ url: String, attempt: Int) {
-        guard let probeURL = Self.webSocketProbeURL(from: url) else {
-            publishReadyURL(url)
-            return
-        }
-
-        let probe = TunnelWebSocketReadinessProbe(url: probeURL, timeout: 2.0)
-        readinessProbe = probe
-        probe.start { [weak self] isReady in
-            self?.readinessQueue.async { [weak self] in
-                guard let self else { return }
-                guard self.readinessGate.isWaitingFor(url) else { return }
-
-                if isReady {
-                    self.publishReadyURL(url)
-                    return
-                }
-
-                switch self.readinessGate.handleProbeFailure(for: url, tunnelIsRunning: self.isRunning) {
-                case .retry(let pendingURL):
-                    self.readinessProbe = nil
-                    let delay = self.readinessRetryDelay(after: attempt)
-                    self.readinessQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
-                        self?.probeTunnelURL(pendingURL, attempt: attempt + 1)
-                    }
-                case .stop:
-                    self.readinessProbe = nil
-                    DispatchQueue.main.async { [weak self] in self?.urlHandler?(nil) }
-                case .restart(let pendingURL):
-                    self.readinessProbe = nil
-                    self.readinessGate.reset()
-                    self.restartTunnelAfterUnreadyURL(pendingURL)
-                case .ignore:
-                    self.readinessProbe = nil
                 }
             }
         }
@@ -252,23 +208,9 @@ class CloudflareTunnelManager {
         min(4.0, max(1.0, Double(attempt) * 0.5))
     }
 
-    private func restartTunnelAfterUnreadyURL(_ url: String) {
-        diagnostics.record("Cloudflare setup link did not become reachable; restarting tunnel for a fresh link.")
-        guard isRunning else {
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                _ = self.start(localPort: self.activeLocalPort)
-            }
-            return
-        }
-        isRestartingAfterUnreadyURL = true
-        process?.terminate()
-    }
-
     private func publishReadyURL(_ url: String) {
         guard let readyURL = readinessGate.publishIfReady(url) else { return }
         dnsReadinessProbe = nil
-        readinessProbe = nil
         DispatchQueue.main.async { [weak self] in self?.urlHandler?(readyURL) }
     }
 
@@ -277,8 +219,6 @@ class CloudflareTunnelManager {
             guard let self else { return }
             self.dnsReadinessProbe?.cancel()
             self.dnsReadinessProbe = nil
-            self.readinessProbe?.cancel()
-            self.readinessProbe = nil
             self.readinessGate.reset()
         }
     }
@@ -286,6 +226,7 @@ class CloudflareTunnelManager {
     private func resetRecentOutput() {
         outputQueue.sync {
             recentOutputLines = []
+            detectedFailure = nil
         }
     }
 
@@ -297,13 +238,39 @@ class CloudflareTunnelManager {
 
         guard !lines.isEmpty else { return }
 
-        outputQueue.async { [weak self] in
-            guard let self else { return }
-            self.recentOutputLines.append(contentsOf: lines)
-            if self.recentOutputLines.count > 20 {
-                self.recentOutputLines.removeFirst(self.recentOutputLines.count - 20)
+        outputQueue.sync {
+            if let failure = CloudflareTunnelOutputFailureDetector.failure(from: lines) {
+                detectedFailure = failure
+            }
+            recentOutputLines.append(contentsOf: lines)
+            if recentOutputLines.count > 20 {
+                recentOutputLines.removeFirst(recentOutputLines.count - 20)
             }
         }
+    }
+
+    private func detectedTunnelFailure(status: Int32) -> CloudflareTunnelFailure? {
+        var failure: CloudflareTunnelFailure?
+        outputQueue.sync {
+            failure = detectedFailure
+        }
+        if let failure {
+            return failure
+        }
+        guard status != 0 else { return nil }
+        return CloudflareTunnelFailure(
+            reason: "tunnel_process_exited",
+            title: "Remote Access could not start",
+            message: "The secure link helper stopped before AirDesk could create a setup link. Try again in a few minutes, then send diagnostics if it keeps failing."
+        )
+    }
+
+    private func tunnelOutputSnapshot() -> [String] {
+        var outputSnapshot: [String] = []
+        outputQueue.sync {
+            outputSnapshot = recentOutputLines
+        }
+        return outputSnapshot
     }
 
     private func tunnelDiagnosticsContext(
@@ -311,10 +278,7 @@ class CloudflareTunnelManager {
         binaryURL: URL? = nil,
         extra: [String: Any] = [:]
     ) -> [String: Any] {
-        var outputSnapshot: [String] = []
-        outputQueue.sync {
-            outputSnapshot = recentOutputLines
-        }
+        let outputSnapshot = tunnelOutputSnapshot()
 
         var context: [String: Any] = [
             "localPort": Int(localPort),
@@ -329,24 +293,6 @@ class CloudflareTunnelManager {
 
         extra.forEach { context[$0.key] = $0.value }
         return context
-    }
-
-    private static func webSocketProbeURL(from tunnelURL: String) -> URL? {
-        guard var components = URLComponents(string: tunnelURL),
-              let scheme = components.scheme?.lowercased() else {
-            return nil
-        }
-        switch scheme {
-        case "https":
-            components.scheme = "wss"
-        case "http":
-            components.scheme = "ws"
-        case "wss", "ws":
-            components.scheme = scheme
-        default:
-            return nil
-        }
-        return components.url
     }
 
     private static func tunnelHost(from tunnelURL: String) -> String? {
@@ -383,6 +329,28 @@ class CloudflareTunnelManager {
     }
 }
 
+struct CloudflareTunnelFailure: Equatable {
+    let reason: String
+    let title: String
+    let message: String
+}
+
+struct CloudflareTunnelOutputFailureDetector {
+    static func failure(from lines: [String]) -> CloudflareTunnelFailure? {
+        let output = lines.joined(separator: "\n").lowercased()
+        if output.contains("429 too many requests")
+            || output.contains("error code: 1015")
+            || output.contains("too many requests") {
+            return CloudflareTunnelFailure(
+                reason: "quick_tunnel_rate_limited",
+                title: "Remote Access is temporarily limited",
+                message: "Cloudflare is temporarily limiting new setup links from this network. Wait a few minutes, then try again. AirDesk will not keep retrying in the background."
+            )
+        }
+        return nil
+    }
+}
+
 enum TunnelURLReadinessAction: Equatable {
     case probe(String)
     case ignore
@@ -390,24 +358,16 @@ enum TunnelURLReadinessAction: Equatable {
 
 enum TunnelURLReadinessFailureAction: Equatable {
     case retry(String)
-    case restart(String)
     case stop
     case ignore
 }
 
 struct TunnelURLReadinessGate {
     private var candidateURL: String?
-    private var probeFailureCount = 0
-    private let maximumProbeFailuresBeforeRestart: Int
-
-    init(maximumProbeFailuresBeforeRestart: Int = 30) {
-        self.maximumProbeFailuresBeforeRestart = max(1, maximumProbeFailuresBeforeRestart)
-    }
 
     mutating func registerCandidate(_ url: String) -> TunnelURLReadinessAction {
         guard candidateURL != url else { return .ignore }
         candidateURL = url
-        probeFailureCount = 0
         return .probe(url)
     }
 
@@ -419,12 +379,7 @@ struct TunnelURLReadinessGate {
         guard candidateURL == url else { return .ignore }
         guard tunnelIsRunning else {
             candidateURL = nil
-            probeFailureCount = 0
             return .stop
-        }
-        probeFailureCount += 1
-        guard probeFailureCount < maximumProbeFailuresBeforeRestart else {
-            return .restart(url)
         }
         return .retry(url)
     }
@@ -432,13 +387,11 @@ struct TunnelURLReadinessGate {
     mutating func publishIfReady(_ url: String) -> String? {
         guard candidateURL == url else { return nil }
         candidateURL = nil
-        probeFailureCount = 0
         return url
     }
 
     mutating func reset() {
         candidateURL = nil
-        probeFailureCount = 0
     }
 }
 
@@ -515,7 +468,15 @@ private final class TunnelDNSReadinessProbe {
 
     func cancel() {
         queue.async { [weak self] in
-            self?.complete(false)
+            guard let self, !self.hasCompleted else { return }
+            self.hasCompleted = true
+            self.timeoutWork?.cancel()
+            self.timeoutWork = nil
+            self.tasks.forEach { $0.cancel() }
+            self.tasks = []
+            self.session?.invalidateAndCancel()
+            self.session = nil
+            self.completion = nil
         }
     }
 
@@ -557,73 +518,5 @@ private final class TunnelDNSReadinessProbe {
         request.setValue("application/dns-json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 3.0
         return request
-    }
-}
-
-private final class TunnelWebSocketReadinessProbe: NSObject, URLSessionWebSocketDelegate {
-    private let url: URL
-    private let timeout: TimeInterval
-    private let queue = DispatchQueue(label: "airdesk.cloudflare.readiness.probe")
-    private var session: URLSession?
-    private var task: URLSessionWebSocketTask?
-    private var timeoutWork: DispatchWorkItem?
-    private var completion: ((Bool) -> Void)?
-    private var hasCompleted = false
-
-    init(url: URL, timeout: TimeInterval) {
-        self.url = url
-        self.timeout = timeout
-    }
-
-    func start(completion: @escaping (Bool) -> Void) {
-        queue.async { [weak self] in
-            guard let self else { return }
-            self.completion = completion
-            let configuration = URLSessionConfiguration.ephemeral
-            let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-            let task = session.webSocketTask(with: self.url)
-            self.session = session
-            self.task = task
-            task.resume()
-
-            let timeoutWork = DispatchWorkItem { [weak self] in
-                self?.complete(false)
-            }
-            self.timeoutWork = timeoutWork
-            self.queue.asyncAfter(deadline: .now() + self.timeout, execute: timeoutWork)
-        }
-    }
-
-    func cancel() {
-        queue.async { [weak self] in
-            self?.complete(false)
-        }
-    }
-
-    private func complete(_ isReady: Bool) {
-        guard !hasCompleted else { return }
-        hasCompleted = true
-        timeoutWork?.cancel()
-        timeoutWork = nil
-        let completion = completion
-        self.completion = nil
-        task?.cancel(with: .normalClosure, reason: nil)
-        task = nil
-        session?.invalidateAndCancel()
-        session = nil
-        completion?(isReady)
-    }
-
-    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
-        queue.async { [weak self] in
-            self?.complete(true)
-        }
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard error != nil else { return }
-        queue.async { [weak self] in
-            self?.complete(false)
-        }
     }
 }

@@ -181,8 +181,6 @@ class CloudflareTunnelManager {
                     self.readinessQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
                         self?.probeTunnelURL(pendingURL, attempt: attempt + 1)
                     }
-                case .publish(let pendingURL):
-                    self.publishReadyURL(pendingURL)
                 case .stop:
                     self.readinessProbe = nil
                     DispatchQueue.main.async { [weak self] in self?.urlHandler?(nil) }
@@ -315,19 +313,13 @@ enum TunnelURLReadinessAction: Equatable {
 
 enum TunnelURLReadinessFailureAction: Equatable {
     case retry(String)
-    case publish(String)
     case stop
     case ignore
 }
 
 struct TunnelURLReadinessGate {
-    private let maximumProbeFailuresBeforeFallback: Int
     private var candidateURL: String?
     private var probeFailureCount = 0
-
-    init(maximumProbeFailuresBeforeFallback: Int = 3) {
-        self.maximumProbeFailuresBeforeFallback = max(1, maximumProbeFailuresBeforeFallback)
-    }
 
     mutating func registerCandidate(_ url: String) -> TunnelURLReadinessAction {
         guard candidateURL != url else { return .ignore }
@@ -348,9 +340,6 @@ struct TunnelURLReadinessGate {
             return .stop
         }
         probeFailureCount += 1
-        guard probeFailureCount < maximumProbeFailuresBeforeFallback else {
-            return .publish(url)
-        }
         return .retry(url)
     }
 

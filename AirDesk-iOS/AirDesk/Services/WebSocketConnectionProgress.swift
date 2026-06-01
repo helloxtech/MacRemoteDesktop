@@ -69,6 +69,12 @@ enum ConnectionStatusPresentation {
     }
 }
 
+enum RemoteCanvasPresentation {
+    static func shouldShowNativeCanvas(hasMonitorInfo: Bool, hasReceivedFrame: Bool) -> Bool {
+        hasMonitorInfo && hasReceivedFrame
+    }
+}
+
 struct WebSocketConnectionProgress {
     private(set) var didOpenSocket = false
     private(set) var didReceivePairedStatus = false
@@ -84,7 +90,10 @@ struct WebSocketConnectionProgress {
         return .keepWaitingForScreenInfo
     }
 
-    mutating func screenInfoReceived() -> WebSocketConnectionProgressAction {
+    mutating func screenInfoReceived(monitorCount: Int) -> WebSocketConnectionProgressAction {
+        guard monitorCount > 0 else {
+            return .keepWaitingForScreenInfo
+        }
         didReceiveScreenInfo = true
         return .connected
     }

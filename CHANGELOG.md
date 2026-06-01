@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bumped Mac to `1.2.7 (25)` and kept Remote Access setup links hidden until the Cloudflare secure WebSocket opens, preventing iPhone scans of DNS-dead tunnel URLs that stall at "Opening secure link."
+- Bumped iOS to `1.2.8 (18)` and kept it on the Connecting screen until real display metadata and the first video frame arrive, preventing black `0fps` remote canvases before the desktop is ready.
 - Bumped iOS to `1.2.7 (17)` and Mac to `1.2.6 (24)` for the friendly Remote Access connection states and automatic failure reports.
 - Added rate-limited automatic HelloX Admin issue reports for iOS connection failures and Mac Remote Access tunnel failures, including safe diagnostic context and recent app events.
 - Fixed first-scan Remote Access retries so iOS stays on the Connecting screen until a session has actually connected, extends the Cloudflare tunnel retry window, and the Mac sends display metadata even while ScreenCaptureKit is still starting.

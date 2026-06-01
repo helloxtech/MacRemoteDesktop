@@ -29,8 +29,10 @@ struct ContentView: View {
     private var connectedRoot: some View {
         if appState.sessionMode == .vnc {
             VNCRemoteDesktopView()
-        } else {
+        } else if shouldShowNativeCanvas {
             RemoteDesktopView()
+        } else {
+            ConnectingView()
         }
     }
 
@@ -38,12 +40,21 @@ struct ContentView: View {
     private var reconnectingRoot: some View {
         if appState.sessionMode == .vnc {
             VNCRemoteDesktopView()
-        } else {
+        } else if shouldShowNativeCanvas {
             ZStack(alignment: .top) {
                 RemoteDesktopView()
                 ConnectionStatusOverlay(kind: .reconnecting)
             }
+        } else {
+            ConnectingView()
         }
+    }
+
+    private var shouldShowNativeCanvas: Bool {
+        RemoteCanvasPresentation.shouldShowNativeCanvas(
+            hasMonitorInfo: !appState.monitors.isEmpty,
+            hasReceivedFrame: appState.hasReceivedNativeFrame
+        )
     }
 }
 

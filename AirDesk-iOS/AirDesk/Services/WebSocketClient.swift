@@ -227,14 +227,20 @@ class WebSocketClient: NSObject {
 
         switch type {
         case "screen_info":
-            _ = connectionProgress.screenInfoReceived()
+            guard let msg = try? JSONDecoder().decode(ScreenInfoMessage.self, from: data) else {
+                AirDeskDiagnostics.shared.record("Ignored malformed screen info message")
+                return
+            }
+            let progressAction = connectionProgress.screenInfoReceived(monitorCount: msg.monitors.count)
+            guard progressAction == .connected else {
+                AirDeskDiagnostics.shared.record("Received empty screen info; waiting for Mac display metadata")
+                return
+            }
             hasEverCompletedConnection = true
             connectTimeoutWork?.cancel()
             connectTimeoutWork = nil
             reconnectAttempts = 0
-            if let msg = try? JSONDecoder().decode(ScreenInfoMessage.self, from: data) {
-                onMonitorsReceived?(msg.monitors)
-            }
+            onMonitorsReceived?(msg.monitors)
         case "clipboard_changed":
             if let msg = try? JSONDecoder().decode(ClipboardMessage.self, from: data) {
                 onClipboardChanged?(msg.content)

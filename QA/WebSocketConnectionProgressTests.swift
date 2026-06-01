@@ -4,9 +4,11 @@ import Foundation
 struct WebSocketConnectionProgressTests {
     static func main() {
         testPairedStatusStillWaitsForScreenInfo()
+        testEmptyScreenInfoStillWaitsForRealMonitorMetadata()
         testUnpairedStatusStopsWaitingForUserInput()
         testInitialRetryStaysInConnectingState()
         testRetryAfterCompletedConnectionShowsReconnectingState()
+        testRemoteCanvasWaitsForFirstDecodedFrame()
         testRemoteConnectingPresentationUsesHelpfulCopy()
         print("WebSocketConnectionProgressTests passed")
     }
@@ -18,8 +20,24 @@ struct WebSocketConnectionProgressTests {
         guard progress.pairingStatusReceived(paired: true) == .keepWaitingForScreenInfo else {
             fatalError("Expected paired status to keep the connect timeout active until screen info arrives")
         }
-        guard progress.screenInfoReceived() == .connected else {
+        guard progress.screenInfoReceived(monitorCount: 1) == .connected else {
             fatalError("Expected screen info to complete the connection")
+        }
+    }
+
+    private static func testEmptyScreenInfoStillWaitsForRealMonitorMetadata() {
+        var progress = WebSocketConnectionProgress()
+        progress.webSocketDidOpen()
+        _ = progress.pairingStatusReceived(paired: true)
+
+        guard progress.screenInfoReceived(monitorCount: 0) == .keepWaitingForScreenInfo else {
+            fatalError("Expected empty screen info to keep waiting for real monitor metadata")
+        }
+        guard progress.didReceiveScreenInfo == false else {
+            fatalError("Expected empty screen info not to mark the connection complete")
+        }
+        guard progress.screenInfoReceived(monitorCount: 2) == .connected else {
+            fatalError("Expected non-empty screen info to complete the connection")
         }
     }
 
@@ -55,6 +73,15 @@ struct WebSocketConnectionProgressTests {
 
         guard state == .reconnecting else {
             fatalError("Expected retry after a completed session to show Reconnecting")
+        }
+    }
+
+    private static func testRemoteCanvasWaitsForFirstDecodedFrame() {
+        guard RemoteCanvasPresentation.shouldShowNativeCanvas(hasMonitorInfo: true, hasReceivedFrame: false) == false else {
+            fatalError("Expected monitor metadata alone not to show the native remote canvas")
+        }
+        guard RemoteCanvasPresentation.shouldShowNativeCanvas(hasMonitorInfo: true, hasReceivedFrame: true) else {
+            fatalError("Expected the native remote canvas after the first decoded frame")
         }
     }
 

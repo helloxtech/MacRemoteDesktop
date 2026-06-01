@@ -56,11 +56,13 @@ final class FrameDecoderStore {
     var onFPSUpdate: ((Double) -> Void)?
     var onPendingFrame: ((CVPixelBuffer, Int) -> Void)?
     var onRecoveryKeyframeNeeded: ((Int) -> Void)?
+    var onFirstDecodedFrame: ((Int) -> Void)?
 
     private var videoDecoders: [Int: VideoDecoder] = [:]
     private let queue = DispatchQueue(label: "airdesk.decoder")
     private var fpsFrameCount = 0
     private var fpsWindowStart: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    private var displaysWithDecodedFrames: Set<Int> = []
 
     func decode(_ data: Data, payloadOffset: Int, displayIndex: Int, isKeyframe: Bool) {
         queue.async { [weak self] in
@@ -75,6 +77,7 @@ final class FrameDecoderStore {
             self.videoDecoders.removeAll()
             self.fpsFrameCount = 0
             self.fpsWindowStart = CFAbsoluteTimeGetCurrent()
+            self.displaysWithDecodedFrames.removeAll()
         }
     }
 
@@ -93,6 +96,9 @@ final class FrameDecoderStore {
     }
 
     private func handleDecodedFrame(_ pixelBuffer: CVPixelBuffer, displayIndex: Int) {
+        if displaysWithDecodedFrames.insert(displayIndex).inserted {
+            onFirstDecodedFrame?(displayIndex)
+        }
         tickFPS()
         if !FrameRelay.shared.deliver(pixelBuffer, displayIndex: displayIndex) {
             onPendingFrame?(pixelBuffer, displayIndex)
@@ -124,6 +130,7 @@ class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published var latencyMs: Int = 0
     @Published var decodedFPS: Double = 0
+    @Published var hasReceivedNativeFrame = false
     @Published var isHostLocked: Bool = false
     @Published var hostStatusMessage: String?
     @Published var permissionStatus: PermissionStatusMessage = .controlReady
@@ -179,6 +186,13 @@ class AppState: ObservableObject {
         }
         frameDecoderStore.onPendingFrame = { [weak self] pixelBuffer, displayIndex in
             Task { @MainActor in self?.pendingFrames[displayIndex] = pixelBuffer }
+        }
+        frameDecoderStore.onFirstDecodedFrame = { [weak self] displayIndex in
+            Task { @MainActor in
+                guard let self, !self.hasReceivedNativeFrame else { return }
+                self.hasReceivedNativeFrame = true
+                AirDeskDiagnostics.shared.record("Received first video frame for display \(displayIndex)")
+            }
         }
         frameDecoderStore.onRecoveryKeyframeNeeded = { [weak self] displayIndex in
             Task { @MainActor in
@@ -249,6 +263,10 @@ class AppState: ObservableObject {
 
         client.onMonitorsReceived = { [weak self] monitors in
             Task { @MainActor in
+                guard !monitors.isEmpty else {
+                    AirDeskDiagnostics.shared.record("Ignored empty monitor list")
+                    return
+                }
                 AirDeskDiagnostics.shared.record("Received \(monitors.count) monitor(s)")
                 let currentIndex = self?.activeMonitorIndex ?? 0
                 self?.monitors = monitors
@@ -662,6 +680,7 @@ class AppState: ObservableObject {
         }
         latencyMs = 0
         decodedFPS = 0
+        hasReceivedNativeFrame = false
         isHostLocked = false
         hostStatusMessage = nil
         permissionStatus = .controlReady

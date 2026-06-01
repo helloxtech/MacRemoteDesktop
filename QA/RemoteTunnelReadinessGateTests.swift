@@ -8,6 +8,8 @@ struct RemoteTunnelReadinessGateTests {
         testProbeFailureKeepsWaitingWhileTunnelIsRunning()
         testRepeatedProbeFailuresRestartTheTunnel()
         testRegisteringNewCandidateResetsRestartThreshold()
+        testDNSReadinessAcceptsIPv6Answer()
+        testDNSReadinessRejectsNoAddressAnswers()
         print("RemoteTunnelReadinessGateTests passed")
     }
 
@@ -91,6 +93,36 @@ struct RemoteTunnelReadinessGateTests {
         }
         guard gate.handleProbeFailure(for: secondURL, tunnelIsRunning: true) == .restart(secondURL) else {
             fatalError("Expected the reset threshold to apply to the new candidate URL")
+        }
+    }
+
+    private static func testDNSReadinessAcceptsIPv6Answer() {
+        let payload = Data("""
+        {
+          "Status": 0,
+          "Answer": [
+            { "name": "ready.trycloudflare.com", "type": 28, "TTL": 300, "data": "2606:4700::6810:e684" }
+          ]
+        }
+        """.utf8)
+
+        guard TunnelDNSReadinessPayload.containsAddressRecord(payload) else {
+            fatalError("Expected an IPv6 DNS answer to mark the tunnel hostname as ready")
+        }
+    }
+
+    private static func testDNSReadinessRejectsNoAddressAnswers() {
+        let payload = Data("""
+        {
+          "Status": 0,
+          "Question": [
+            { "name": "waiting.trycloudflare.com", "type": 28 }
+          ]
+        }
+        """.utf8)
+
+        guard !TunnelDNSReadinessPayload.containsAddressRecord(payload) else {
+            fatalError("Expected a DNS response without A or AAAA answers to remain not ready")
         }
     }
 }

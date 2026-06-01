@@ -28,6 +28,7 @@ class CloudflareTunnelManager {
     private let outputQueue = DispatchQueue(label: "airdesk.cloudflare.output")
     private let diagnostics: TunnelDiagnosticsReporting
     private var readinessGate = TunnelURLReadinessGate()
+    private var dnsReadinessProbe: TunnelDNSReadinessProbe?
     private var readinessProbe: TunnelWebSocketReadinessProbe?
     private var isStopping = false
     private var isRestartingAfterUnreadyURL = false
@@ -163,9 +164,47 @@ class CloudflareTunnelManager {
             guard self.isRunning else { return }
             switch self.readinessGate.registerCandidate(url) {
             case .probe:
-                self.probeTunnelURL(url, attempt: 1)
+                self.waitForTunnelDNS(url, attempt: 1)
             case .ignore:
                 break
+            }
+        }
+    }
+
+    private func waitForTunnelDNS(_ url: String, attempt: Int) {
+        guard let host = Self.tunnelHost(from: url) else {
+            probeTunnelURL(url, attempt: 1)
+            return
+        }
+
+        let probe = TunnelDNSReadinessProbe(host: host, timeout: 3.0)
+        dnsReadinessProbe = probe
+        probe.start { [weak self] isReady in
+            self?.readinessQueue.async { [weak self] in
+                guard let self else { return }
+                guard self.readinessGate.isWaitingFor(url) else { return }
+
+                self.dnsReadinessProbe = nil
+
+                if isReady {
+                    self.probeTunnelURL(url, attempt: 1)
+                    return
+                }
+
+                switch self.readinessGate.handleProbeFailure(for: url, tunnelIsRunning: self.isRunning) {
+                case .retry(let pendingURL):
+                    let delay = self.readinessRetryDelay(after: attempt)
+                    self.readinessQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        self?.waitForTunnelDNS(pendingURL, attempt: attempt + 1)
+                    }
+                case .stop:
+                    DispatchQueue.main.async { [weak self] in self?.urlHandler?(nil) }
+                case .restart(let pendingURL):
+                    self.readinessGate.reset()
+                    self.restartTunnelAfterUnreadyURL(pendingURL)
+                case .ignore:
+                    break
+                }
             }
         }
     }
@@ -228,6 +267,7 @@ class CloudflareTunnelManager {
 
     private func publishReadyURL(_ url: String) {
         guard let readyURL = readinessGate.publishIfReady(url) else { return }
+        dnsReadinessProbe = nil
         readinessProbe = nil
         DispatchQueue.main.async { [weak self] in self?.urlHandler?(readyURL) }
     }
@@ -235,6 +275,8 @@ class CloudflareTunnelManager {
     private func resetReadiness() {
         readinessQueue.async { [weak self] in
             guard let self else { return }
+            self.dnsReadinessProbe?.cancel()
+            self.dnsReadinessProbe = nil
             self.readinessProbe?.cancel()
             self.readinessProbe = nil
             self.readinessGate.reset()
@@ -307,6 +349,10 @@ class CloudflareTunnelManager {
         return components.url
     }
 
+    private static func tunnelHost(from tunnelURL: String) -> String? {
+        URLComponents(string: tunnelURL)?.host
+    }
+
     private func extractURL(from output: String) -> String? {
         let patterns = ["https://[a-z0-9-]+\\.trycloudflare\\.com", "https://[a-z0-9-]+\\.cfargotunnel\\.com"]
         for pattern in patterns {
@@ -354,7 +400,7 @@ struct TunnelURLReadinessGate {
     private var probeFailureCount = 0
     private let maximumProbeFailuresBeforeRestart: Int
 
-    init(maximumProbeFailuresBeforeRestart: Int = 8) {
+    init(maximumProbeFailuresBeforeRestart: Int = 30) {
         self.maximumProbeFailuresBeforeRestart = max(1, maximumProbeFailuresBeforeRestart)
     }
 
@@ -393,6 +439,124 @@ struct TunnelURLReadinessGate {
     mutating func reset() {
         candidateURL = nil
         probeFailureCount = 0
+    }
+}
+
+struct TunnelDNSReadinessPayload {
+    static func containsAddressRecord(_ data: Data) -> Bool {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let answers = json["Answer"] as? [[String: Any]] else {
+            return false
+        }
+
+        return answers.contains { answer in
+            guard let type = answer["type"] as? Int,
+                  (type == 1 || type == 28),
+                  let value = answer["data"] as? String else {
+                return false
+            }
+            return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+}
+
+private final class TunnelDNSReadinessProbe {
+    private let host: String
+    private let timeout: TimeInterval
+    private let queue = DispatchQueue(label: "airdesk.cloudflare.dns-readiness.probe")
+    private var session: URLSession?
+    private var tasks: [URLSessionDataTask] = []
+    private var timeoutWork: DispatchWorkItem?
+    private var completion: ((Bool) -> Void)?
+    private var hasCompleted = false
+    private var remainingRequests = 0
+
+    init(host: String, timeout: TimeInterval) {
+        self.host = host
+        self.timeout = timeout
+    }
+
+    func start(completion: @escaping (Bool) -> Void) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.completion = completion
+            let session = URLSession(configuration: .ephemeral)
+            self.session = session
+
+            let recordTypes = ["A", "AAAA"]
+            self.remainingRequests = recordTypes.count
+
+            for recordType in recordTypes {
+                guard let request = Self.request(host: self.host, recordType: recordType) else {
+                    self.remainingRequests -= 1
+                    continue
+                }
+                let task = session.dataTask(with: request) { [weak self] data, _, _ in
+                    self?.queue.async {
+                        self?.handleResponse(data)
+                    }
+                }
+                tasks.append(task)
+                task.resume()
+            }
+
+            if self.remainingRequests <= 0 {
+                self.complete(false)
+                return
+            }
+
+            let timeoutWork = DispatchWorkItem { [weak self] in
+                self?.complete(false)
+            }
+            self.timeoutWork = timeoutWork
+            self.queue.asyncAfter(deadline: .now() + self.timeout, execute: timeoutWork)
+        }
+    }
+
+    func cancel() {
+        queue.async { [weak self] in
+            self?.complete(false)
+        }
+    }
+
+    private func handleResponse(_ data: Data?) {
+        guard !hasCompleted else { return }
+        if let data, TunnelDNSReadinessPayload.containsAddressRecord(data) {
+            complete(true)
+            return
+        }
+
+        remainingRequests -= 1
+        if remainingRequests <= 0 {
+            complete(false)
+        }
+    }
+
+    private func complete(_ isReady: Bool) {
+        guard !hasCompleted else { return }
+        hasCompleted = true
+        timeoutWork?.cancel()
+        timeoutWork = nil
+        tasks.forEach { $0.cancel() }
+        tasks = []
+        session?.invalidateAndCancel()
+        session = nil
+        let completion = completion
+        self.completion = nil
+        completion?(isReady)
+    }
+
+    private static func request(host: String, recordType: String) -> URLRequest? {
+        var components = URLComponents(string: "https://cloudflare-dns.com/dns-query")
+        components?.queryItems = [
+            URLQueryItem(name: "name", value: host),
+            URLQueryItem(name: "type", value: recordType)
+        ]
+        guard let url = components?.url else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue("application/dns-json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 3.0
+        return request
     }
 }
 

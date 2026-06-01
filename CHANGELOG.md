@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Bumped Mac to `1.2.9 (27)` so Remote Access checks Cloudflare DNS before opening the secure WebSocket, avoiding macOS negative DNS caching that could keep the QR setup window stuck on "Creating secure link..."
 - Bumped Mac to `1.2.8 (26)` so Remote Access automatically restarts the Cloudflare tunnel when a setup link never becomes DNS-ready, preventing the "Creating secure link..." setup panel from spinning forever.
 - Bumped Mac to `1.2.7 (25)` and kept Remote Access setup links hidden until the Cloudflare secure WebSocket opens, preventing iPhone scans of DNS-dead tunnel URLs that stall at "Opening secure link."
 - Bumped iOS to `1.2.8 (18)` and kept it on the Connecting screen until real display metadata and the first video frame arrive, preventing black `0fps` remote canvases before the desktop is ready.

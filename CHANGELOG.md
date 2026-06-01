@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Bumped Mac to `1.2.8 (26)` so Remote Access automatically restarts the Cloudflare tunnel when a setup link never becomes DNS-ready, preventing the "Creating secure link..." setup panel from spinning forever.
 - Bumped Mac to `1.2.7 (25)` and kept Remote Access setup links hidden until the Cloudflare secure WebSocket opens, preventing iPhone scans of DNS-dead tunnel URLs that stall at "Opening secure link."
 - Bumped iOS to `1.2.8 (18)` and kept it on the Connecting screen until real display metadata and the first video frame arrive, preventing black `0fps` remote canvases before the desktop is ready.
 - Bumped iOS to `1.2.7 (17)` and Mac to `1.2.6 (24)` for the friendly Remote Access connection states and automatic failure reports.

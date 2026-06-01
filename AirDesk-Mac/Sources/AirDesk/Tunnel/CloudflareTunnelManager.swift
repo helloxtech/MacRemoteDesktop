@@ -30,6 +30,8 @@ class CloudflareTunnelManager {
     private var readinessGate = TunnelURLReadinessGate()
     private var readinessProbe: TunnelWebSocketReadinessProbe?
     private var isStopping = false
+    private var isRestartingAfterUnreadyURL = false
+    private var activeLocalPort: UInt16 = 7890
     private var recentOutputLines: [String] = []
     var urlHandler: ((String?) -> Void)?
     var isRunning: Bool {
@@ -56,6 +58,7 @@ class CloudflareTunnelManager {
     @discardableResult
     func start(localPort: UInt16 = 7890) -> Bool {
         guard !isRunning else { return true }
+        activeLocalPort = localPort
         isStopping = false
         resetRecentOutput()
         guard let binaryURL = cloudflaredURLs.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
@@ -92,8 +95,19 @@ class CloudflareTunnelManager {
         proc.terminationHandler = { [weak self] terminatedProcess in
             guard let self else { return }
             let wasStopping = self.isStopping
+            let shouldRestart = self.isRestartingAfterUnreadyURL && !wasStopping
             self.isStopping = false
+            self.isRestartingAfterUnreadyURL = false
+            self.process = nil
             self.resetReadiness()
+            if shouldRestart {
+                let message = "Cloudflare tunnel exited with status \(terminatedProcess.terminationStatus) while refreshing an unreachable setup link; restarting."
+                self.diagnostics.record(message)
+                DispatchQueue.main.async { [weak self] in
+                    _ = self?.start(localPort: localPort)
+                }
+                return
+            }
             if !wasStopping {
                 let message = "Cloudflare tunnel exited with status \(terminatedProcess.terminationStatus)."
                 self.diagnostics.record(message)
@@ -184,6 +198,10 @@ class CloudflareTunnelManager {
                 case .stop:
                     self.readinessProbe = nil
                     DispatchQueue.main.async { [weak self] in self?.urlHandler?(nil) }
+                case .restart(let pendingURL):
+                    self.readinessProbe = nil
+                    self.readinessGate.reset()
+                    self.restartTunnelAfterUnreadyURL(pendingURL)
                 case .ignore:
                     self.readinessProbe = nil
                 }
@@ -193,6 +211,19 @@ class CloudflareTunnelManager {
 
     private func readinessRetryDelay(after attempt: Int) -> TimeInterval {
         min(4.0, max(1.0, Double(attempt) * 0.5))
+    }
+
+    private func restartTunnelAfterUnreadyURL(_ url: String) {
+        diagnostics.record("Cloudflare setup link did not become reachable; restarting tunnel for a fresh link.")
+        guard isRunning else {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                _ = self.start(localPort: self.activeLocalPort)
+            }
+            return
+        }
+        isRestartingAfterUnreadyURL = true
+        process?.terminate()
     }
 
     private func publishReadyURL(_ url: String) {
@@ -313,6 +344,7 @@ enum TunnelURLReadinessAction: Equatable {
 
 enum TunnelURLReadinessFailureAction: Equatable {
     case retry(String)
+    case restart(String)
     case stop
     case ignore
 }
@@ -320,6 +352,11 @@ enum TunnelURLReadinessFailureAction: Equatable {
 struct TunnelURLReadinessGate {
     private var candidateURL: String?
     private var probeFailureCount = 0
+    private let maximumProbeFailuresBeforeRestart: Int
+
+    init(maximumProbeFailuresBeforeRestart: Int = 8) {
+        self.maximumProbeFailuresBeforeRestart = max(1, maximumProbeFailuresBeforeRestart)
+    }
 
     mutating func registerCandidate(_ url: String) -> TunnelURLReadinessAction {
         guard candidateURL != url else { return .ignore }
@@ -340,6 +377,9 @@ struct TunnelURLReadinessGate {
             return .stop
         }
         probeFailureCount += 1
+        guard probeFailureCount < maximumProbeFailuresBeforeRestart else {
+            return .restart(url)
+        }
         return .retry(url)
     }
 

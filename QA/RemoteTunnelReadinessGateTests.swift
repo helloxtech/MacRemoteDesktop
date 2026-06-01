@@ -6,7 +6,8 @@ struct RemoteTunnelReadinessGateTests {
         testURLIsNotPublishedUntilProbeSucceeds()
         testStaleProbeSuccessIsIgnored()
         testProbeFailureKeepsWaitingWhileTunnelIsRunning()
-        testRepeatedProbeFailuresKeepWaitingWhileTunnelIsRunning()
+        testRepeatedProbeFailuresRestartTheTunnel()
+        testRegisteringNewCandidateResetsRestartThreshold()
         print("RemoteTunnelReadinessGateTests passed")
     }
 
@@ -55,8 +56,8 @@ struct RemoteTunnelReadinessGateTests {
         }
     }
 
-    private static func testRepeatedProbeFailuresKeepWaitingWhileTunnelIsRunning() {
-        var gate = TunnelURLReadinessGate()
+    private static func testRepeatedProbeFailuresRestartTheTunnel() {
+        var gate = TunnelURLReadinessGate(maximumProbeFailuresBeforeRestart: 3)
         let url = "https://probe-blocked.trycloudflare.com"
 
         _ = gate.registerCandidate(url)
@@ -67,8 +68,29 @@ struct RemoteTunnelReadinessGateTests {
         guard gate.handleProbeFailure(for: url, tunnelIsRunning: true) == .retry(url) else {
             fatalError("Expected the second failed readiness probe to retry")
         }
-        guard gate.handleProbeFailure(for: url, tunnelIsRunning: true) == .retry(url) else {
-            fatalError("Expected repeated readiness failures to keep the setup link hidden while the tunnel is running")
+        guard gate.handleProbeFailure(for: url, tunnelIsRunning: true) == .restart(url) else {
+            fatalError("Expected repeated readiness failures to restart the tunnel instead of waiting forever")
+        }
+    }
+
+    private static func testRegisteringNewCandidateResetsRestartThreshold() {
+        var gate = TunnelURLReadinessGate(maximumProbeFailuresBeforeRestart: 2)
+        let firstURL = "https://first.trycloudflare.com"
+        let secondURL = "https://second.trycloudflare.com"
+
+        _ = gate.registerCandidate(firstURL)
+
+        guard gate.handleProbeFailure(for: firstURL, tunnelIsRunning: true) == .retry(firstURL) else {
+            fatalError("Expected first candidate to retry after one failure")
+        }
+
+        _ = gate.registerCandidate(secondURL)
+
+        guard gate.handleProbeFailure(for: secondURL, tunnelIsRunning: true) == .retry(secondURL) else {
+            fatalError("Expected a new candidate URL to reset the failure count")
+        }
+        guard gate.handleProbeFailure(for: secondURL, tunnelIsRunning: true) == .restart(secondURL) else {
+            fatalError("Expected the reset threshold to apply to the new candidate URL")
         }
     }
 }

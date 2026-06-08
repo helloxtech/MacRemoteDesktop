@@ -289,7 +289,14 @@ class MonitorViewController: UIViewController, UIGestureRecognizerDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.isFrameDrawScheduled = false
-            self.mtkView?.setNeedsDisplay()
+            // Draw the frame immediately instead of calling setNeedsDisplay().
+            // During a scroll/pan gesture UIKit runs the main run loop in
+            // tracking mode, and MTKView's internal redraw does NOT fire in that
+            // mode — which froze the remote video for the whole gesture and only
+            // caught up on release (the "scroll latency" / "frozen during scroll"
+            // bug). GCD main-queue blocks DO run in tracking mode, so forcing a
+            // synchronous draw() here keeps the picture live while scrolling.
+            self.mtkView?.draw()
         }
     }
 

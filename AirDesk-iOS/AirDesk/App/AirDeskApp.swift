@@ -20,8 +20,10 @@ struct AirDeskApp: App {
                     appState.startDiscovery()
                 }
                 .onChange(of: scenePhase) { newPhase in
-                    if newPhase == .active && appState.connectionState == .disconnected {
-                        appState.startDiscovery()
+                    if newPhase == .active {
+                        // Recover the live session (decoder + socket) after the app
+                        // returns from the background, and refresh discovery when idle.
+                        appState.handleAppDidBecomeActive()
                     }
                 }
                 .onOpenURL { url in

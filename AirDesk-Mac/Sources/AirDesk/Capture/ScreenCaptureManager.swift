@@ -121,11 +121,18 @@ final class ScreenCaptureManager: NSObject, @unchecked Sendable {
                 guard isCaptureActive(generation) else { return }
                 let filter = SCContentFilter(display: display, excludingWindows: [])
                 let config = SCStreamConfiguration()
-                config.width = display.width
-                config.height = display.height
+                // Cap the streamed resolution. On very large displays (e.g. a
+                // 3440x1440 ultrawide or 4K), full-resolution frames are too big
+                // for the video budget during scrolling, so they pile up in the
+                // network buffer and the picture lags badly. Downscaling the
+                // stream keeps frames small enough to stay live; the iOS side
+                // still letterboxes by the real aspect ratio and can pinch-zoom.
+                let (capW, capH) = Self.cappedCaptureSize(width: display.width, height: display.height)
+                config.width = capW
+                config.height = capH
                 config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
                 config.pixelFormat = kCVPixelFormatType_32BGRA
-                config.scalesToFit = false
+                config.scalesToFit = true
 
                 let stream = SCStream(filter: filter, configuration: config, delegate: self)
                 try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "airdesk.capture.\(index)"))
@@ -213,6 +220,23 @@ final class ScreenCaptureManager: NSObject, @unchecked Sendable {
         !Task.isCancelled && captureQueue.sync {
             isCapturing && captureGeneration == generation
         }
+    }
+
+    /// Longest streamed edge, in pixels. Large displays are downscaled to this
+    /// so per-frame size stays small enough to remain low-latency while scrolling.
+    static let maxCaptureEdge = 1920
+
+    /// Proportionally caps a capture size to `maxCaptureEdge`, rounding to even
+    /// dimensions (H.264 encoders require even width/height).
+    static func cappedCaptureSize(width: Int, height: Int) -> (width: Int, height: Int) {
+        let w = max(width, 1)
+        let h = max(height, 1)
+        let longest = max(w, h)
+        guard longest > maxCaptureEdge else { return (w, h) }
+        let scale = Double(maxCaptureEdge) / Double(longest)
+        let scaledW = max(2, Int((Double(w) * scale).rounded()) & ~1)
+        let scaledH = max(2, Int((Double(h) * scale).rounded()) & ~1)
+        return (scaledW, scaledH)
     }
 
     private static func activeDisplayIDs() -> [CGDirectDisplayID] {

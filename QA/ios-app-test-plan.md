@@ -50,6 +50,14 @@
 | CF-09 | Local pairing retry | Enter the correct six-digit code in the pairing sheet | App retries automatically and transitions to remote desktop view |
 | CF-10 | Incomplete pairing code | Enter fewer than six digits in the pairing sheet | Connect action remains disabled |
 | CF-11 | Automatic Remote failure diagnostics | Scan a Remote QR code while the tunnel is unreachable until retry attempts are exhausted | App shows a friendly failure state and HelloX Admin receives one throttled `remote_access_connection_failure` report with recent events |
+| CF-12 | Reconnect now button | While the Connecting or Reconnecting status card is shown, tap "Reconnect now" | App immediately starts a fresh connection attempt instead of waiting for the backoff timer |
+| CF-13 | Background/foreground recovery (Local) | Connect locally, switch to another app for 30–60s, return to AirDesk | Desktop reappears automatically within a few seconds (decoder rebuilds, fresh frame loads); no force-quit needed |
+| CF-14 | Long background recovery | Connect, leave AirDesk backgrounded for several minutes, return | App detects the stale/dead socket via the heartbeat, shows the Reconnecting card, then restores the live desktop |
+| CF-15 | Static-screen liveness | Connect to a Mac and leave the desktop completely idle (no on-screen changes) for >30s | Connection is NOT dropped as "stale" — the Mac status heartbeat keeps it alive |
+| CF-16 | Wi-Fi drop recovery | Connect, toggle iPhone Wi-Fi off then on | App reconnects and the desktop returns without quitting the app |
+| CF-17 | Remote Access paywall Apple note | Open Remote mode without an active Remote Access plan | Paywall says purchases are handled securely by Apple and the user may be asked to sign in to their Apple Account |
+| CF-18 | Redeem offer code action | On the Remote Access paywall, tap "Redeem Offer Code" | Apple's StoreKit offer-code redemption sheet opens; no custom HelloX unlock-code field is shown |
+| CF-19 | Restore after offer-code redemption | Redeem a Pro offer code, return to AirDesk, then tap "Restore Purchases" if the plan did not update immediately | `RemoteAccessSubscriptionStore` refreshes the Pro entitlement and Remote Access can start |
 
 ---
 
@@ -87,14 +95,14 @@
 
 | ID | Test Case | Steps | Expected Result |
 |----|-----------|-------|-----------------|
-| MM-01 | Multiple monitors shown | Mac has 2 displays | Two page dots shown at bottom |
-| MM-02 | Swipe to switch monitor | Swipe left on remote view | Shows display 2 |
-| MM-03 | Swipe back | Swipe right | Returns to display 1 |
-| MM-04 | Tap page dot | Tap right page dot | Switches to display 2 |
-| MM-05 | Active dot highlights | Switch monitors | Correct dot highlighted |
-| MM-06 | Monitor name shown | 2+ monitors connected | Current monitor name in toolbar |
-| MM-07 | Touch on correct display | Touch on display 2 view | Event sent with displayIndex=1 |
-| MM-08 | Single monitor | Mac has 1 display | No page dots shown |
+| MM-01 | Multiple monitors shown | Mac has 2 displays | Screen switcher bar shows "Screen 1" and "Screen 2" chips with ‹ › arrows at top left |
+| MM-02 | Tap chip to switch | Tap "Screen 2" | Active screen changes to display 2 and a fresh frame loads |
+| MM-03 | Next/previous arrows | Tap › then ‹ | Steps forward then back through screens, wrapping at the ends |
+| MM-04 | Active chip highlights | Switch screens | The current screen chip is highlighted (blue) |
+| MM-05 | Switcher survives toolbar hide | Hide the toolbar (chevron), keep 2+ displays | Screen switcher bar stays visible at top — does NOT disappear with the toolbar |
+| MM-06 | Touch on correct display | Switch to Screen 2, tap content | Event sent with displayIndex=1 |
+| MM-07 | Single monitor | Mac has 1 display | No screen switcher bar shown (nothing to switch) |
+| MM-08 | Switcher after reconnect | Drop/restore the connection with 2+ displays | Switcher reappears with all screens after the session recovers |
 
 ---
 

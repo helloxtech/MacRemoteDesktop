@@ -54,8 +54,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.helloxtech.airdesk.ios
-        MARKETING_VERSION: 1.2.8
-        CURRENT_PROJECT_VERSION: 18
+        MARKETING_VERSION: 1.2.9
+        CURRENT_PROJECT_VERSION: 20
         SWIFT_VERSION: 5.9
         INFOPLIST_FILE: AirDesk/Info.plist
         DEVELOPMENT_TEAM: JQUJYL5AF4

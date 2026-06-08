@@ -107,14 +107,21 @@ struct RemoteDesktopView: View {
             }
             .ignoresSafeArea()
             .overlay(alignment: .top) {
-                Group {
-                    if toolbarVisible {
-                        topChrome
-                    } else {
-                        toolbarRevealButton
+                // Single, always-visible header row: close · screen switcher ·
+                // latency · toolbar toggle. The screen switcher stays reachable
+                // here regardless of whether the bottom toolbar is shown.
+                VStack(spacing: isRegular ? 8 : 6) {
+                    topBar
+                    if appState.isHostLocked {
+                        hostLockedBanner
+                    }
+                    if !appState.permissionStatus.canControl {
+                        permissionBanner
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .top)
                 .ignoresSafeArea(edges: .top)
+                .padding(.horizontal, isRegular ? 8 : 6)
                 .padding(.top, effectiveTopInset + (isRegular ? 6 : 10))
             }
             .overlay(alignment: .bottom) {
@@ -156,56 +163,62 @@ struct RemoteDesktopView: View {
         .ignoresSafeArea()
     }
 
-    private var topChrome: some View {
-        VStack(spacing: isRegular ? 8 : 6) {
-            HStack(spacing: isRegular ? 10 : 6) {
-                topButton("xmark", action: closeRemote)
+    private var topBar: some View {
+        HStack(spacing: isRegular ? 8 : 5) {
+            topButton("xmark", action: closeRemote)
 
-                if appState.monitors.count > 1 {
+            if appState.monitors.count > 1 {
+                screenStepButton("chevron.left") { stepMonitor(by: -1) }
+                    .accessibilityLabel("Previous screen")
+
+                ScrollViewReader { proxy in
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: isRegular ? 8 : 5) {
-                            ForEach(appState.monitors) { monitor in
-                                topMonitorButton(monitor)
+                            ForEach(sortedMonitors) { monitor in
+                                screenChip(monitor).id(monitor.id)
                             }
                         }
+                        .padding(.horizontal, 2)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Spacer(minLength: 0)
+                    .onChange(of: appState.activeMonitorIndex) { idx in
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            proxy.scrollTo(idx, anchor: .center)
+                        }
+                    }
                 }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Switch Mac screen")
 
-                LatencyBadge(ms: appState.latencyMs, fps: appState.decodedFPS)
-
-                topButton(toolbarVisible ? "chevron.down" : "ellipsis", action: toggleToolbar)
-            }
-            .padding(.horizontal, isRegular ? 6 : 4)
-            .padding(.vertical, isRegular ? 5 : 4)
-            .background(Color.black.opacity(0.52))
-            .overlay(
-                Capsule().stroke(Color.white.opacity(0.20), lineWidth: 1)
-            )
-            .clipShape(Capsule())
-            .shadow(color: .black.opacity(0.45), radius: 8, x: 0, y: 3)
-
-            if appState.isHostLocked {
-                Text(appState.hostStatusMessage ?? "Mac is locked")
-                    .font(.system(size: isRegular ? 13 : 11, weight: .medium))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, isRegular ? 8 : 6)
-                    .padding(.vertical, 6)
-                    .background(Color.black.opacity(0.72))
-                    .clipShape(Capsule())
-                    .padding(.horizontal, isRegular ? 8 : 6)
+                screenStepButton("chevron.right") { stepMonitor(by: 1) }
+                    .accessibilityLabel("Next screen")
+            } else {
+                Spacer(minLength: 0)
             }
 
-            if !appState.permissionStatus.canControl {
-                permissionBanner
-            }
+            LatencyBadge(ms: appState.latencyMs, fps: appState.decodedFPS)
+
+            topButton(toolbarVisible ? "chevron.down" : "chevron.up", action: toggleToolbar)
         }
-        .frame(maxWidth: .infinity, alignment: .top)
         .padding(.horizontal, isRegular ? 8 : 6)
-        .padding(.bottom, isRegular ? 4 : 2)
+        .padding(.vertical, isRegular ? 5 : 4)
+        .background(Color.black.opacity(0.55))
+        .overlay(
+            Capsule().stroke(Color.white.opacity(0.20), lineWidth: 1)
+        )
+        .clipShape(Capsule())
+        .shadow(color: .black.opacity(0.45), radius: 8, x: 0, y: 3)
+    }
+
+    private var hostLockedBanner: some View {
+        Text(appState.hostStatusMessage ?? "Mac is locked")
+            .font(.system(size: isRegular ? 13 : 11, weight: .medium))
+            .foregroundColor(.white)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, isRegular ? 12 : 9)
+            .padding(.vertical, 6)
+            .background(Color.black.opacity(0.72))
+            .clipShape(Capsule())
     }
 
     private var permissionBanner: some View {
@@ -247,29 +260,6 @@ struct RemoteDesktopView: View {
                 .stroke(Color.yellow.opacity(0.45), lineWidth: 1)
         )
         .cornerRadius(isRegular ? 14 : 12)
-        .padding(.horizontal, isRegular ? 8 : 6)
-    }
-
-    private var toolbarRevealButton: some View {
-        HStack {
-            Spacer()
-            Button(action: toggleToolbar) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.down.circle.fill")
-                        .font(.system(size: isRegular ? 18 : 16, weight: .semibold))
-                    Text("Tools")
-                        .font(.system(size: isRegular ? 14 : 12, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, isRegular ? 12 : 10)
-                .frame(height: isRegular ? 36 : 32)
-                .background(Color.black.opacity(0.82))
-                .overlay(
-                    Capsule().stroke(Color.white.opacity(0.22), lineWidth: 1)
-                )
-                .clipShape(Capsule())
-            }
-        }
         .padding(.horizontal, isRegular ? 8 : 6)
     }
 
@@ -389,24 +379,56 @@ struct RemoteDesktopView: View {
         }
     }
 
-    private func topMonitorButton(_ monitor: MonitorInfo) -> some View {
+    // MARK: - Screen switcher
+
+    private var sortedMonitors: [MonitorInfo] {
+        appState.monitors.sorted { $0.id < $1.id }
+    }
+
+    private func stepMonitor(by delta: Int) {
+        let mons = sortedMonitors
+        guard !mons.isEmpty else { return }
+        let currentPos = mons.firstIndex { $0.id == appState.activeMonitorIndex } ?? 0
+        let nextPos = (currentPos + delta + mons.count) % mons.count
+        let target = mons[nextPos].id
+        guard target != appState.activeMonitorIndex else { return }
+        appState.selectMonitor(target)
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    private func screenChip(_ monitor: MonitorInfo) -> some View {
         let selected = appState.activeMonitorIndex == monitor.id
-        return Button { appState.selectMonitor(monitor.id) } label: {
-            HStack(spacing: isRegular ? 4 : 3) {
+        let position = (sortedMonitors.firstIndex { $0.id == monitor.id } ?? monitor.id) + 1
+        return Button {
+            appState.selectMonitor(monitor.id)
+            UISelectionFeedbackGenerator().selectionChanged()
+        } label: {
+            HStack(spacing: isRegular ? 5 : 4) {
                 Image(systemName: "display")
-                    .font(.system(size: isRegular ? 11 : 9))
-                Text("\(monitor.id + 1)")
+                    .font(.system(size: isRegular ? 12 : 10, weight: .semibold))
+                Text("Screen \(position)")
                     .font(.system(size: isRegular ? 13 : 11, weight: .semibold))
+                    .fixedSize()
             }
             .foregroundColor(remoteButtonForeground(active: selected))
-            .padding(.horizontal, isRegular ? 10 : 7)
-            .frame(height: isRegular ? 34 : 28)
+            .padding(.horizontal, isRegular ? 12 : 9)
+            .frame(height: isRegular ? 34 : 30)
             .background(remoteButtonFill(active: selected))
-            .overlay(
-                Capsule().stroke(remoteButtonStroke(active: selected), lineWidth: 1)
-            )
-            .cornerRadius(isRegular ? 17 : 14)
+            .overlay(Capsule().stroke(remoteButtonStroke(active: selected), lineWidth: 1))
+            .clipShape(Capsule())
             .shadow(color: .black.opacity(0.42), radius: 5, x: 0, y: 2)
+        }
+    }
+
+    private func screenStepButton(_ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: isRegular ? 14 : 12, weight: .bold))
+                .foregroundColor(.white)
+                .frame(width: isRegular ? 34 : 30, height: isRegular ? 34 : 30)
+                .background(Color.black.opacity(0.55))
+                .overlay(Circle().stroke(Color.white.opacity(0.22), lineWidth: 1))
+                .clipShape(Circle())
         }
     }
 

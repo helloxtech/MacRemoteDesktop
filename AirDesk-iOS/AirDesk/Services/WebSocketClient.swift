@@ -28,6 +28,16 @@ class WebSocketClient: NSObject {
     private var lastLatencyCallbackTime: CFAbsoluteTime = 0
     private let latencyCallbackInterval: CFAbsoluteTime = 0.25
 
+    // Liveness heartbeat. The Mac broadcasts permission_status every ~3s to every
+    // authorized client, so a healthy connection always has inbound traffic even
+    // when the desktop is static. If nothing arrives for staleTimeout we treat the
+    // socket as half-open (common after the app is backgrounded) and force a
+    // reconnect instead of leaving the user staring at a frozen/black canvas.
+    private var lastInboundAt: CFAbsoluteTime = 0
+    private var heartbeatTimer: DispatchSourceTimer?
+    private let heartbeatCheckInterval: TimeInterval = 3.0
+    private var staleTimeout: TimeInterval { endpointURL == nil ? 8.0 : 14.0 }
+
     var onMonitorsReceived: (([MonitorInfo]) -> Void)?
     // timestampMs added so AppState can compute latency
     var onVideoFrame: ((Data, Int, Bool, UInt32, Int) -> Void)?
@@ -61,6 +71,7 @@ class WebSocketClient: NSObject {
         stateQueue.async { [weak self] in
             guard let self else { return }
             self.isIntentionallyClosed = false
+            self.startHeartbeatOnQueue()
             self.connectAttemptOnQueue(resetRetryCount: true)
         }
     }
@@ -68,6 +79,7 @@ class WebSocketClient: NSObject {
     func disconnect() {
         stateQueue.async { [weak self] in
             guard let self else { return }
+            self.stopHeartbeatOnQueue()
             self.connectTimeoutWork?.cancel()
             self.connectTimeoutWork = nil
             self.reconnectWorkItem?.cancel()
@@ -81,6 +93,44 @@ class WebSocketClient: NSObject {
             self.task = nil
             self.session = nil
         }
+    }
+
+    /// Immediately checks whether the established connection has gone stale.
+    /// Called when the app returns to the foreground, where iOS may have quietly
+    /// torn down the socket without delivering a close callback.
+    func checkConnectionHealthNow() {
+        stateQueue.async { [weak self] in
+            self?.checkHeartbeatOnQueue()
+        }
+    }
+
+    private func startHeartbeatOnQueue() {
+        stopHeartbeatOnQueue()
+        let timer = DispatchSource.makeTimerSource(queue: stateQueue)
+        timer.schedule(deadline: .now() + heartbeatCheckInterval, repeating: heartbeatCheckInterval)
+        timer.setEventHandler { [weak self] in
+            self?.checkHeartbeatOnQueue()
+        }
+        heartbeatTimer = timer
+        timer.resume()
+    }
+
+    private func stopHeartbeatOnQueue() {
+        heartbeatTimer?.cancel()
+        heartbeatTimer = nil
+    }
+
+    private func checkHeartbeatOnQueue() {
+        guard !isIntentionallyClosed, !isReconnecting else { return }
+        // Only police sessions that have actually completed a handshake — a slow
+        // first connect is handled by connectTimeoutWork, not the heartbeat.
+        guard hasEverCompletedConnection, task != nil else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        guard lastInboundAt > 0, now - lastInboundAt > staleTimeout else { return }
+        AirDeskDiagnostics.shared.record(String(format: "Connection stale (%.1fs without data); forcing reconnect", now - lastInboundAt))
+        // Tear down the dead task and route through the normal reconnect path.
+        task?.cancel(with: .abnormalClosure, reason: nil)
+        handleDisconnectOnQueue(URLError(.timedOut))
     }
 
     func requestStream(displayIndex: Int) {
@@ -118,6 +168,9 @@ class WebSocketClient: NSObject {
         let generation = connectionGeneration
         hasSentConnectMessage = false
         requiresUserInitiatedReconnect = false
+        // Seed the heartbeat clock so a fresh attempt gets a full grace period
+        // before the staleness check can fire.
+        lastInboundAt = CFAbsoluteTimeGetCurrent()
         connectionProgress = WebSocketConnectionProgress()
 
         connectTimeoutWork?.cancel()
@@ -213,6 +266,9 @@ class WebSocketClient: NSObject {
     }
 
     private func handleMessageOnQueue(_ message: URLSessionWebSocketTask.Message) {
+        // Any inbound traffic proves the socket is alive (the Mac sends a
+        // permission_status heartbeat every few seconds even on a static screen).
+        lastInboundAt = CFAbsoluteTimeGetCurrent()
         switch message {
         case .string(let text): handleTextMessageOnQueue(text)
         case .data(let data):   handleBinaryMessageOnQueue(data)

@@ -1,5 +1,6 @@
 import Foundation
 import StoreKit
+import UIKit
 
 @MainActor
 final class RemoteAccessSubscriptionStore: ObservableObject {
@@ -83,6 +84,23 @@ final class RemoteAccessSubscriptionStore: ObservableObject {
             message = activePlan.allowsRemoteAccess ? nil : "No active Remote Access subscription was found."
         } catch {
             message = "Purchases could not be restored. Please try again."
+        }
+    }
+
+    func redeemOfferCode(in scene: UIWindowScene?) async {
+        guard let scene else {
+            message = "Offer code redemption is not available right now. Close this screen and try again."
+            return
+        }
+
+        do {
+            try await AppStore.presentOfferCodeRedeemSheet(in: scene)
+            await refreshEntitlements()
+            message = activePlan.allowsRemoteAccess
+                ? nil
+                : "If your plan does not update after redeeming an offer code, tap Restore Purchases."
+        } catch {
+            message = "Offer code redemption could not be opened. Please try again."
         }
     }
 

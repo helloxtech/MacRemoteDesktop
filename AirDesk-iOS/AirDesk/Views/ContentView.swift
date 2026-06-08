@@ -70,8 +70,9 @@ struct ConnectingView: View {
                     for: kind,
                     hostName: appState.selectedHost?.name
                 ),
-                showsCancel: true,
-                cancel: { appState.disconnect() }
+                cancelTitle: "Cancel",
+                cancel: { appState.disconnect() },
+                retry: { appState.retryConnection() }
             )
             .padding(.horizontal, 24)
         }
@@ -91,8 +92,9 @@ struct ConnectionStatusOverlay: View {
                     for: kind,
                     hostName: appState.selectedHost?.name
                 ),
-                showsCancel: true,
-                cancel: { appState.disconnect() }
+                cancelTitle: "Disconnect",
+                cancel: { appState.disconnect() },
+                retry: { appState.retryConnection() }
             )
             .padding(.horizontal, 24)
         }
@@ -101,8 +103,9 @@ struct ConnectionStatusOverlay: View {
 
 private struct ConnectionStatusCard: View {
     let content: ConnectionStatusContent
-    let showsCancel: Bool
+    var cancelTitle: String = "Cancel"
     let cancel: () -> Void
+    var retry: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 18) {
@@ -141,8 +144,20 @@ private struct ConnectionStatusCard: View {
             .background(Color(.tertiarySystemGroupedBackground))
             .cornerRadius(10)
 
-            if showsCancel {
-                Button("Cancel", action: cancel)
+            VStack(spacing: 12) {
+                if let retry {
+                    Button(action: retry) {
+                        Label("Reconnect now", systemImage: "arrow.clockwise")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 11)
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
+                    }
+                }
+
+                Button(cancelTitle, action: cancel)
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(.blue)
             }

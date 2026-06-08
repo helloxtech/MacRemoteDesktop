@@ -263,24 +263,32 @@ class AppState: ObservableObject {
 
         client.onMonitorsReceived = { [weak self] monitors in
             Task { @MainActor in
+                guard let self else { return }
                 guard !monitors.isEmpty else {
                     AirDeskDiagnostics.shared.record("Ignored empty monitor list")
                     return
                 }
                 AirDeskDiagnostics.shared.record("Received \(monitors.count) monitor(s)")
-                let currentIndex = self?.activeMonitorIndex ?? 0
-                self?.monitors = monitors
+                // If we already had a live picture, this screen_info is the result
+                // of a reconnect. The previous VideoToolbox sessions are stale
+                // (and may be invalid after a background suspension), so drop them
+                // and rebuild cleanly from the next forced keyframe.
+                if self.hasReceivedNativeFrame {
+                    self.frameDecoderStore.reset()
+                }
+                let currentIndex = self.activeMonitorIndex
+                self.monitors = monitors
                 if !monitors.contains(where: { $0.id == currentIndex }) {
-                    self?.activeMonitorIndex = monitors.first?.id ?? 0
+                    self.activeMonitorIndex = monitors.first?.id ?? 0
                 }
-                self?.pendingPairingRequest = nil
-                self?.pairingChallenge = nil
-                self?.connectionState = .connected
+                self.pendingPairingRequest = nil
+                self.pairingChallenge = nil
+                self.connectionState = .connected
                 if request.mode == .remoteAccess {
-                    self?.beginRemoteAccessUsageSessionIfNeeded()
+                    self.beginRemoteAccessUsageSessionIfNeeded()
                 }
-                self?.saveRemoteConnectionIfNeeded(request)
-                self?.requestFreshFrames()
+                self.saveRemoteConnectionIfNeeded(request)
+                self.requestFreshFrames()
             }
         }
 
@@ -543,6 +551,60 @@ class AppState: ObservableObject {
         AirDeskDiagnostics.shared.record("Disconnect requested")
         resetConnectionState(keepSelectedHost: false)
         startDiscovery()  // restart scan so the list is fresh when returning to ConnectionView
+    }
+
+    /// Called when the app returns to the foreground. iOS invalidates the
+    /// hardware H.264 decode session and may quietly drop the WebSocket while the
+    /// app is suspended, which previously left users on a permanent black canvas
+    /// that only a force-quit could clear. This recovers in place: verify the
+    /// socket is still alive, throw away the stale decoder, and pull a fresh
+    /// keyframe so the desktop repaints.
+    func handleAppDidBecomeActive() {
+        AirDeskDiagnostics.shared.record("App became active (state: \(connectionState))")
+
+        guard sessionMode != nil else {
+            if connectionState == .disconnected {
+                startDiscovery()
+            }
+            return
+        }
+
+        // VNC manages its own session lifecycle; only the native path needs the
+        // decoder/keyframe recovery dance.
+        guard sessionMode != .vnc else { return }
+
+        switch connectionState {
+        case .connected:
+            // Drop the (likely invalidated) decode session and ask for a new
+            // keyframe. If the socket itself died while backgrounded, the health
+            // check below promotes us to .reconnecting instead.
+            frameDecoderStore.reset()
+            hasReceivedNativeFrame = false
+            webSocketClient?.checkConnectionHealthNow()
+            requestFreshFrames()
+        case .reconnecting, .connecting:
+            // A retry is already in flight; just make sure it's not waiting on a
+            // dead socket the OS never closed.
+            webSocketClient?.checkConnectionHealthNow()
+        case .disconnected:
+            startDiscovery()
+        }
+    }
+
+    /// Force an immediate fresh connection attempt. Used by the "Reconnect now"
+    /// button so a non-technical user is never stuck waiting on the automatic
+    /// backoff timer.
+    func retryConnection() {
+        if let client = webSocketClient {
+            AirDeskDiagnostics.shared.record("Manual reconnect requested")
+            connectionState = .reconnecting
+            client.connect()
+            return
+        }
+        if let host = selectedHost, let mode = sessionMode, mode != .vnc {
+            connect(using: ConnectionRequest(mode: mode, host: host, pairingCode: nil,
+                                             vncUsername: nil, vncPassword: nil))
+        }
     }
 
     func selectMonitor(_ index: Int) {

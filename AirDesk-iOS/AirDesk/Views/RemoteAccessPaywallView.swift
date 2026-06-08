@@ -13,6 +13,7 @@ struct RemoteAccessPaywallView: View {
                     header
                     usageSummary
                     planList
+                    redeemOfferButton
                     restoreButton
                     finePrint
                 }
@@ -140,12 +141,25 @@ struct RemoteAccessPaywallView: View {
         }
     }
 
+    private var redeemOfferButton: some View {
+        Button(action: redeemOfferCode) {
+            Text("Redeem Offer Code")
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(Color.blue.opacity(0.12))
+                .foregroundColor(.blue)
+                .cornerRadius(10)
+        }
+    }
+
     private var finePrint: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let message = subscriptionStore.message {
                 Text(message)
                     .foregroundColor(.orange)
             }
+            Text("Purchases are handled securely by Apple. You may be asked to sign in to your Apple Account.")
             Text("Remote Access time is counted only while a remote session is connected on this device. Local network connections are unlimited.")
             Text("Subscriptions renew monthly through Apple and can be managed in App Store settings.")
         }
@@ -170,5 +184,20 @@ struct RemoteAccessPaywallView: View {
                 dismiss()
             }
         }
+    }
+
+    private func redeemOfferCode() {
+        Task {
+            await subscriptionStore.redeemOfferCode(in: activeWindowScene())
+            if appState.remoteAccessUsageSummary().canStart {
+                dismiss()
+            }
+        }
+    }
+
+    private func activeWindowScene() -> UIWindowScene? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
     }
 }

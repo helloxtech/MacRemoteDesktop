@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Bumped Mac to `1.2.11 (29)` and capped the streamed resolution at 1920px on the long edge (downscaling large displays such as a 3440x1440 ultrawide or 4K panels). Full-resolution frames were too large to stay live during scrolling and piled up in the network buffer, causing very high lag; the smaller frames keep scrolling responsive. Aspect ratio is preserved and the iPhone can still pinch-zoom for detail.
+- Bumped iOS to `1.2.9 (20)` and fixed the remote screen freezing while scrolling (and the related "scroll lag"): the video is now drawn the instant each frame arrives instead of relying on Metal's built-in redraw, which iOS suspends during a scroll/pan gesture. The Mac picture now keeps moving live while you scroll instead of freezing until you lift your finger.
+- Added Apple's native `Redeem Offer Code` action to the Remote Access paywall and added Apple purchase/sign-in copy so App Store builds do not expose a custom HelloX unlock-code path.
+- Flattened the iOS remote-view header into a single always-visible row (close · screen switcher · latency · toolbar toggle), replacing the previous two stacked pill rows. The toolbar toggle now hides only the bottom controls; the screen switcher stays put.
+- Bumped iOS to `1.2.9 (19)` and fixed the remote view "blacking out" after the app was backgrounded or the connection dropped: AirDesk now detects a dead/half-open connection (using the Mac's regular status heartbeat), rebuilds the video decoder, and pulls a fresh frame automatically when you return to the app — so you no longer have to quit and reopen to reconnect.
+- Added a "Reconnect now" button to the iOS Connecting and Reconnecting screens so a stuck connection can be retried without leaving the session.
+- Restored and improved the iOS multi-screen switcher: the "Screen 1 / Screen 2 ..." control with previous/next arrows now stays visible at the top left whenever your Mac has more than one display, even after the toolbar is hidden, instead of disappearing.
 - Bumped Mac to `1.2.10 (28)` and changed Remote Access so slow readiness checks no longer create new Cloudflare Quick Tunnel links in a loop, preventing `429 Too Many Requests` rate limits and showing a clear retry message when Cloudflare temporarily refuses new setup links.
 - Bumped Mac to `1.2.9 (27)` so Remote Access checks Cloudflare DNS before opening the secure WebSocket, avoiding macOS negative DNS caching that could keep the QR setup window stuck on "Creating secure link..."
 - Bumped Mac to `1.2.8 (26)` so Remote Access automatically restarts the Cloudflare tunnel when a setup link never becomes DNS-ready, preventing the "Creating secure link..." setup panel from spinning forever.

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added Mac-side automatic HelloX Admin reports when Remote Access rejects an outdated or malformed iOS connect attempt, so old App Store client failures still produce server-side diagnostics even when the iOS app cannot submit its own report.
 - Improved the iOS Remote tab saved-connection UI: saved Remote Access entries now appear as friendly Saved Macs with Connect/Unlock actions, a `Rename` sheet, Copy Link, and Delete in the overflow menu instead of exposing only the raw tunnel URL and trash icon.
 - Bumped Mac to `1.2.11 (29)` and capped the streamed resolution at 1920px on the long edge (downscaling large displays such as a 3440x1440 ultrawide or 4K panels). Full-resolution frames were too large to stay live during scrolling and piled up in the network buffer, causing very high lag; the smaller frames keep scrolling responsive. Aspect ratio is preserved and the iPhone can still pinch-zoom for detail.
 - Bumped iOS to `1.2.9 (20)` and fixed the remote screen freezing while scrolling (and the related "scroll lag"): the video is now drawn the instant each frame arrives instead of relying on Metal's built-in redraw, which iOS suspends during a scroll/pan gesture. The Mac picture now keeps moving live while you scroll instead of freezing until you lift your finger.

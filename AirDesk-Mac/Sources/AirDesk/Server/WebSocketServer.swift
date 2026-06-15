@@ -298,6 +298,15 @@ final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable 
                     message: "This iOS AirDesk app is not compatible with the current Mac app. Update the iOS app, then enter the pairing code shown in the AirDesk Mac menu."
                 )
                 AirDeskDiagnostics.shared.record("Rejected malformed native connect request")
+                if requiresMinimumRemoteAccessClientVersion(connection) {
+                    uploadRemoteAccessClientCompatibilityReport(
+                        action: "remote_access_client_rejected",
+                        reason: "remote_access_malformed_connect",
+                        errorMessage: "Remote Access client sent a connect message the current Mac app could not decode.",
+                        connection: connection,
+                        extraContext: malformedConnectContext(text)
+                    )
+                }
                 sendPairingStatus(status, to: connection)
             }
             break
@@ -370,12 +379,27 @@ final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable 
     private func authorizeConnection(_ connection: NWConnection, message: ConnectMessage) -> Bool {
         if requiresMinimumRemoteAccessClientVersion(connection),
            !AirDeskAppVersion.isVersion(message.clientVersion, atLeast: minimumRemoteAccessClientVersion) {
+            let clientVersion = diagnosticString(message.clientVersion, limit: 80)
             let status = PairingStatusMessage(
                 paired: false,
                 message: "Update the AirDesk iOS app to version \(minimumRemoteAccessClientVersion) or later before using Remote Access."
             )
             AirDeskDiagnostics.shared.record(
-                "Rejected Remote Access client \(message.clientName) version \(message.clientVersion); requires \(minimumRemoteAccessClientVersion)+"
+                "Rejected Remote Access client version \(clientVersion); requires \(minimumRemoteAccessClientVersion)+"
+            )
+            uploadRemoteAccessClientCompatibilityReport(
+                action: "remote_access_client_rejected",
+                reason: "remote_access_client_version_unsupported",
+                errorMessage: "Remote Access client version \(clientVersion) is older than required version \(minimumRemoteAccessClientVersion).",
+                connection: connection,
+                extraContext: [
+                    "clientVersion": clientVersion,
+                    "clientNamePresent": !message.clientName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    "clientIDPresent": !message.clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    "pairingCodePresent": message.pairingCode?.isEmpty == false,
+                    "authProofPresent": message.authProof?.isEmpty == false,
+                    "clientNoncePresent": message.clientNonce?.isEmpty == false
+                ]
             )
             sendPairingStatus(status, to: connection)
             return false
@@ -398,6 +422,69 @@ final class WebSocketServer: NSObject, H264EncoderDelegate, @unchecked Sendable 
             || value == "0:0:0:0:0:0:0:1"
             || value == "127.0.0.1"
             || value.hasPrefix("127.")
+    }
+
+    private func uploadRemoteAccessClientCompatibilityReport(
+        action: String,
+        reason: String,
+        errorMessage: String,
+        connection: NWConnection,
+        extraContext: [String: Any]
+    ) {
+        var context: [String: Any] = [
+            "minimumRemoteAccessClientVersion": minimumRemoteAccessClientVersion,
+            "connectionEndpointKind": endpointKind(connection.endpoint),
+            "remoteAccessTunnelPath": requiresMinimumRemoteAccessClientVersion(connection)
+        ]
+        extraContext.forEach { context[$0.key] = $0.value }
+        AirDeskDiagnostics.shared.uploadAutomaticIssueReport(
+            action: action,
+            reason: reason,
+            errorMessage: errorMessage,
+            context: context
+        )
+    }
+
+    private func malformedConnectContext(_ text: String) -> [String: Any] {
+        var context: [String: Any] = [
+            "messageByteCount": text.utf8.count
+        ]
+
+        guard let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            context["jsonDecoded"] = false
+            return context
+        }
+
+        context["jsonDecoded"] = true
+        context["fieldNames"] = Array(json.keys.sorted().prefix(20))
+        context["fieldCount"] = json.keys.count
+        context["clientVersionPresent"] = (json["clientVersion"] as? String)?.isEmpty == false
+        context["clientNamePresent"] = (json["clientName"] as? String)?.isEmpty == false
+        context["clientIDPresent"] = (json["clientID"] as? String)?.isEmpty == false
+        context["pairingCodePresent"] = (json["pairingCode"] as? String)?.isEmpty == false
+        context["authProofPresent"] = (json["authProof"] as? String)?.isEmpty == false
+        context["clientNoncePresent"] = (json["clientNonce"] as? String)?.isEmpty == false
+        return context
+    }
+
+    private func endpointKind(_ endpoint: NWEndpoint) -> String {
+        guard case .hostPort(let host, _) = endpoint else { return "non_host_port" }
+        let value = String(describing: host).lowercased()
+        if value == "localhost"
+            || value == "::1"
+            || value == "0:0:0:0:0:0:0:1"
+            || value == "127.0.0.1"
+            || value.hasPrefix("127.") {
+            return "loopback"
+        }
+        return "non_loopback"
+    }
+
+    private func diagnosticString(_ value: String, limit: Int) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > limit else { return trimmed }
+        return "\(trimmed.prefix(limit))..."
     }
 
     private func isAuthorized(_ connection: NWConnection) -> Bool {

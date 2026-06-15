@@ -53,6 +53,8 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
     private var shouldShowTunnelQRCodeWhenReady = false
     private var qrPanel: NSPanel?
     private var currentSetupLinkForPanel: String?
+    private var connectedClientCount = 0
+    private var copyTunnelURLTitleResetWorkItem: DispatchWorkItem?
 
     init(server: WebSocketServer, tunnel: CloudflareTunnelManager, capture: ScreenCaptureManager,
          bonjour: BonjourAdvertiser, clipboard: ClipboardManager, pairing: PairingManager) {
@@ -84,14 +86,14 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         copyTunnelURLItem.isHidden = true
         showTunnelQRCodeItem = NSMenuItem(title: "Show Connect QR Code...", action: #selector(showTunnelQRCode), keyEquivalent: "")
         showTunnelQRCodeItem.isHidden = true
-        tunnelNoticeItem = NSMenuItem(title: "Note: Keep Remote Access on to keep this link active.", action: nil, keyEquivalent: "")
+        tunnelNoticeItem = NSMenuItem(title: "Link stays active while on.", action: nil, keyEquivalent: "")
         tunnelNoticeItem.isEnabled = false
         tunnelNoticeItem.isHidden = true
         permissionSummaryItem = NSMenuItem(title: "Setup: Checking...", action: nil, keyEquivalent: "")
         permissionSummaryItem.isEnabled = false
         screenRecordingItem = NSMenuItem(title: "Screen Recording: Checking...", action: nil, keyEquivalent: "")
         screenRecordingItem.isEnabled = false
-        accessibilityItem = NSMenuItem(title: "Keyboard & Mouse: Checking...", action: nil, keyEquivalent: "")
+        accessibilityItem = NSMenuItem(title: "Accessibility: Checking...", action: nil, keyEquivalent: "")
         accessibilityItem.isEnabled = false
         openScreenRecordingItem = NSMenuItem(title: "Open Screen Recording Settings", action: #selector(openScreenRecordingSettings), keyEquivalent: "")
         openAccessibilityItem = NSMenuItem(title: "Open Accessibility Settings", action: #selector(openAccessibilitySettings), keyEquivalent: "")
@@ -177,6 +179,8 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
                     self?.currentTunnelURL = nil
                     self?.tunnelURLItem.title = "Tunnel: Not active"
                     self?.tunnelToggleItem.title = "Enable Remote Access (Tunnel)"
+                    self?.copyTunnelURLItem.title = "Copy Tunnel URL"
+                    self?.copyTunnelURLTitleResetWorkItem?.cancel()
                     self?.showTunnelQRCodeItem.isHidden = true
                     self?.copyTunnelURLItem.isHidden = true
                     self?.tunnelNoticeItem.isHidden = true
@@ -237,7 +241,7 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
     private func confirmRemoteAccessNotice() -> Bool {
         let alert = NSAlert()
         alert.messageText = "Remote Access may be slower"
-        alert.informativeText = "Remote Access lets you connect when you are away from the same Wi-Fi. Scan once from your iPhone to save this Mac for next time. Keep Remote Access on to keep the same link active."
+        alert.informativeText = "Remote Access lets you connect when you are away from the same Wi-Fi. Scan once from your iPhone to save this Mac for next time. Leave Remote Access on only while you need this setup link; turning it off closes the link."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Turn On Remote Access")
         alert.addButton(withTitle: "Not Now")
@@ -265,6 +269,7 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(currentTunnelURL, forType: .string)
+        flashMenuItem(copyTunnelURLItem, copiedTitle: "Copied!", defaultTitle: "Copy Tunnel URL")
     }
 
     @objc private func showTunnelQRCode() {
@@ -472,11 +477,15 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         return panel
     }
 
-    @objc fileprivate func copyRemoteSetupLinkFromPanel() {
+    @objc fileprivate func copyRemoteSetupLinkFromPanel(_ sender: NSButton) {
         guard let currentSetupLinkForPanel else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(currentSetupLinkForPanel, forType: .string)
+        sender.title = "Copied!"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak sender] in
+            sender?.title = "Copy Setup Link"
+        }
     }
 
     @objc fileprivate func retryRemoteAccessFromPanel() {
@@ -662,6 +671,8 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
         clipboard.stop()
         tunnel.stop()
         isSharing = false
+        connectedClientCount = 0
+        clientCountItem.title = "No clients connected"
         toggleItem.title = "Start Sharing"
         updateIcon()
         updatePermissionItems()
@@ -669,29 +680,46 @@ class StatusBarController: NSObject, NSMenuDelegate, NSWindowDelegate {
 
     func updateClientCount(_ count: Int) {
         DispatchQueue.main.async {
+            self.connectedClientCount = count
             self.clientCountItem.title = count == 0
                 ? "No clients connected"
                 : "\(count) client\(count > 1 ? "s" : "") connected"
+            self.updateIcon()
         }
     }
 
     private func updateIcon() {
         guard let button = statusItem.button else { return }
-        // Different icon for active vs idle — fixed copy-paste bug
         let symbolName = isSharing ? "desktopcomputer.and.arrow.down" : "desktopcomputer"
         let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "AirDesk")
         image?.isTemplate = true
         button.image = image
         button.appearsDisabled = !isSharing
+        button.contentTintColor = connectedClientCount > 0
+            ? .systemGreen
+            : (isSharing ? .controlAccentColor : nil)
+        button.toolTip = connectedClientCount > 0
+            ? "AirDesk: \(connectedClientCount) client\(connectedClientCount == 1 ? "" : "s") connected"
+            : (isSharing ? "AirDesk: sharing" : "AirDesk: idle")
     }
 
     private func updatePermissionItems() {
         let status = PermissionChecker.currentStatusMessage()
         permissionSummaryItem.title = status.canControl ? "Setup: Ready" : "Setup: Needs Attention"
         screenRecordingItem.title = "Screen Recording: \(status.screenRecording ? "Granted" : "Missing")"
-        accessibilityItem.title = "Keyboard & Mouse: \(status.accessibility ? "Granted" : "Missing")"
+        accessibilityItem.title = "Accessibility: \(status.accessibility ? "Granted" : "Missing")"
         openScreenRecordingItem.isHidden = status.screenRecording
         openAccessibilityItem.isHidden = status.accessibility
+    }
+
+    private func flashMenuItem(_ item: NSMenuItem, copiedTitle: String, defaultTitle: String) {
+        copyTunnelURLTitleResetWorkItem?.cancel()
+        item.title = copiedTitle
+        let workItem = DispatchWorkItem { [weak item] in
+            item?.title = defaultTitle
+        }
+        copyTunnelURLTitleResetWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: workItem)
     }
 }
 
@@ -758,7 +786,7 @@ private enum RemoteAccessSetupPanelState {
         case .starting:
             return nil
         case .ready:
-            return #selector(StatusBarController.copyRemoteSetupLinkFromPanel)
+            return #selector(StatusBarController.copyRemoteSetupLinkFromPanel(_:))
         case .failed:
             return #selector(StatusBarController.retryRemoteAccessFromPanel)
         }

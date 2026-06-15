@@ -104,6 +104,10 @@ struct RemoteDesktopView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(Color.black)
                 }
+
+                if !appState.hasReceivedNativeFrame {
+                    waitingForFrameOverlay
+                }
             }
             .ignoresSafeArea()
             .overlay(alignment: .top) {
@@ -317,7 +321,11 @@ struct RemoteDesktopView: View {
         HStack(spacing: 3) {
             ForEach(RemoteControlMode.allCases) { mode in
                 let selected = controlMode == mode
-                Button { controlMode = mode } label: {
+                Button {
+                    guard controlMode != mode else { return }
+                    controlMode = mode
+                    UISelectionFeedbackGenerator().selectionChanged()
+                } label: {
                     HStack(spacing: 4) {
                         Image(systemName: mode.iconName)
                             .font(.system(size: isRegular ? 13 : 11, weight: .semibold))
@@ -325,7 +333,7 @@ struct RemoteDesktopView: View {
                             .font(.system(size: isRegular ? 12 : 10, weight: .semibold))
                     }
                     .foregroundColor(remoteButtonForeground(active: selected))
-                    .frame(minWidth: isRegular ? 76 : 62, minHeight: isRegular ? 38 : 32)
+                    .frame(minWidth: isRegular ? 76 : 68, minHeight: isRegular ? 44 : 44)
                     .padding(.horizontal, isRegular ? 4 : 3)
                     .background(remoteButtonFill(active: selected))
                     .overlay(
@@ -437,7 +445,7 @@ struct RemoteDesktopView: View {
             Image(systemName: icon)
                 .font(.system(size: isRegular ? 17 : 13, weight: .semibold))
                 .foregroundColor(remoteButtonForeground(highlighted: highlight, enabled: enabled))
-                .frame(width: isRegular ? 46 : 36, height: isRegular ? 44 : 36)
+                .frame(width: isRegular ? 46 : 44, height: 44)
                 .background(remoteButtonFill(highlighted: highlight, enabled: enabled))
                 .overlay(
                     RoundedRectangle(cornerRadius: isRegular ? 10 : 8)
@@ -454,7 +462,7 @@ struct RemoteDesktopView: View {
             Text(label)
                 .font(.system(size: isRegular ? 16 : 12, weight: .semibold))
                 .foregroundColor(remoteButtonForeground(enabled: enabled))
-                .frame(minWidth: isRegular ? 48 : 36, minHeight: isRegular ? 44 : 36)
+                .frame(minWidth: isRegular ? 48 : 44, minHeight: 44)
                 .padding(.horizontal, 2)
                 .background(remoteButtonFill(enabled: enabled))
                 .overlay(
@@ -473,7 +481,7 @@ struct RemoteDesktopView: View {
             Text(symbol)
                 .font(.system(size: isRegular ? 20 : 15, weight: .semibold))
                 .foregroundColor(remoteButtonForeground(active: active, enabled: enabled))
-                .frame(width: isRegular ? 48 : 38, height: isRegular ? 44 : 36)
+                .frame(width: isRegular ? 48 : 44, height: 44)
                 .background(remoteButtonFill(active: active, enabled: enabled))
                 .overlay(
                     RoundedRectangle(cornerRadius: isRegular ? 10 : 8)
@@ -490,6 +498,27 @@ struct RemoteDesktopView: View {
             .fill(Color.white.opacity(0.28))
             .frame(width: 1, height: isRegular ? 30 : 22)
             .padding(.horizontal, isRegular ? 4 : 2)
+    }
+
+    private var waitingForFrameOverlay: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+                .tint(.white)
+            Text("Connecting...")
+                .font(.headline)
+                .foregroundColor(.white)
+            Text("Waiting for the Mac screen.")
+                .font(.subheadline)
+                .foregroundColor(.white.opacity(0.75))
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 18)
+        .background(Color.black.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+        )
     }
 
     private func exportDiagnostics() {

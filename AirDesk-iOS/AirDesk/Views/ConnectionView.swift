@@ -27,6 +27,9 @@ struct ConnectionView: View {
     private var isConnectButtonDisabled: Bool {
         switch draft.mode {
         case .remoteAccess:
+            if !appState.canStartRemoteAccessNow() {
+                return false
+            }
             return draft.remoteAccessURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .vnc:
             return draft.manualIP.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -47,7 +50,8 @@ struct ConnectionView: View {
     private var connectButtonTitle: String {
         switch draft.mode {
         case .airDesk: return "Connect Locally"
-        case .remoteAccess: return "Connect to My Mac"
+        case .remoteAccess:
+            return appState.canStartRemoteAccessNow() ? "Connect with Mac Link" : "Unlock Remote Access"
         case .vnc: return "Connect with VNC"
         }
     }
@@ -141,8 +145,8 @@ struct ConnectionView: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
 
-                if draft.mode == .airDesk || draft.mode == .remoteAccess {
-                    macCompanionReminder
+                if shouldShowMacCompanionSetupHint {
+                    macCompanionSetupHint
                 }
 
                 if draft.mode == .remoteAccess {
@@ -161,63 +165,76 @@ struct ConnectionView: View {
         .padding(.horizontal)
     }
 
-    private var macCompanionReminder: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Mac app required", systemImage: "arrow.down.circle")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(.blue)
-                Text("Local and Remote Access require the free AirDesk Mac Companion running on your Mac. VNC mode can use macOS Screen Sharing instead.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+    private var shouldShowMacCompanionSetupHint: Bool {
+        (draft.mode == .airDesk || draft.mode == .remoteAccess) && !appState.hasCompletedMacCompanionSetup
+    }
 
-            VStack(spacing: 8) {
-                Button {
-                    openURL(macCompanionURL)
-                } label: {
-                    Label("Open Mac Download Page", systemImage: "safari")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(10)
+    private var macCompanionSetupHint: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: "desktopcomputer.and.arrow.down")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(.blue)
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Need the Mac app?")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.primary)
+                    Text("Only for first-time setup.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
 
-                HStack(spacing: 8) {
+                Spacer(minLength: 8)
+
+                Button("Get") {
+                    openURL(macCompanionURL)
+                }
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.borderedProminent)
+
+                Menu {
+                    Button {
+                        openURL(macCompanionURL)
+                    } label: {
+                        Label("Open Download Page", systemImage: "safari")
+                    }
+
                     ShareLink(item: macCompanionURL) {
                         Label("Share Link to Mac", systemImage: "square.and.arrow.up")
-                            .frame(maxWidth: .infinity)
                     }
 
                     Button {
-                        UIPasteboard.general.string = macCompanionURL.absoluteString
-                        macDownloadLinkStatus = "Copied"
+                        copyMacCompanionLink()
                     } label: {
                         Label("Copy Link", systemImage: "doc.on.doc")
-                            .frame(maxWidth: .infinity)
                     }
-                }
-                .font(.caption.weight(.semibold))
-                .buttonStyle(.bordered)
 
-                if let macDownloadLinkStatus {
-                    Text(macDownloadLinkStatus)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
+                    Button {
+                        appState.dismissMacCompanionSetupHint()
+                        macDownloadLinkStatus = nil
+                    } label: {
+                        Label("Hide This Hint", systemImage: "eye.slash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.blue)
+                        .frame(width: 36, height: 36)
                 }
             }
+
+            if let macDownloadLinkStatus {
+                Text(macDownloadLinkStatus)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
         }
-        .padding(isRegular ? 14 : 12)
-        .background(Color.blue.opacity(0.08))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.blue.opacity(0.18), lineWidth: 1)
-        )
-        .cornerRadius(12)
+        .padding(.top, 2)
     }
 
     private var vncSetupGuide: some View {
@@ -246,7 +263,7 @@ struct ConnectionView: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "info.circle.fill")
                 .foregroundColor(.orange)
-            Text("Remote access can be slower than local Wi-Fi. After the first successful scan, AirDesk saves this Mac here for next time.")
+            Text("Remote can be slower than local Wi-Fi. Scan once, then reconnect from Saved Macs.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -471,14 +488,15 @@ struct ConnectionView: View {
     }
 
     private var scanQRCodeButton: some View {
-        Button(action: {
-            if appState.canStartRemoteAccessNow() {
+        let canStartRemoteAccess = appState.canStartRemoteAccessNow()
+        return Button(action: {
+            if canStartRemoteAccess {
                 isShowingQRCodeScanner = true
             } else {
                 appState.presentRemoteAccessPlans()
             }
         }) {
-            Label("Scan QR Code from Mac", systemImage: "qrcode.viewfinder")
+            Label(canStartRemoteAccess ? "Scan Mac QR Code" : "Unlock Remote Access", systemImage: canStartRemoteAccess ? "qrcode.viewfinder" : "lock.fill")
                 .font(.headline)
                 .frame(maxWidth: .infinity)
                 .padding(isRegular ? 16 : 12)
@@ -492,6 +510,7 @@ struct ConnectionView: View {
         SavedRemoteConnectionsSection(
             store: appState.remoteConnectionStore,
             isRegular: isRegular,
+            canStartRemoteAccess: appState.canStartRemoteAccessNow(),
             connect: connectToSavedRemoteConnection
         )
     }
@@ -538,12 +557,20 @@ struct ConnectionView: View {
     }
 
     private func connectManually() {
+        if draft.mode == .remoteAccess, !appState.canStartRemoteAccessNow() {
+            appState.presentRemoteAccessPlans()
+            return
+        }
         submitConnection {
             draft.manualRequest()
         }
     }
 
     private func connectToSavedRemoteConnection(_ connection: SavedRemoteConnection) {
+        if !appState.canStartRemoteAccessNow() {
+            appState.presentRemoteAccessPlans()
+            return
+        }
         draft.setMode(.remoteAccess)
         draft.remoteAccessURL = connection.urlString
         draft.pairingCode = connection.pairingCode ?? ""
@@ -554,6 +581,16 @@ struct ConnectionView: View {
 
     private func exportDiagnostics() {
         diagnosticsExport = DiagnosticsExport(url: AirDeskDiagnostics.shared.exportFile())
+    }
+
+    private func copyMacCompanionLink() {
+        UIPasteboard.general.string = macCompanionURL.absoluteString
+        macDownloadLinkStatus = "Link copied"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            if macDownloadLinkStatus == "Link copied" {
+                macDownloadLinkStatus = nil
+            }
+        }
     }
 
     private func reportIssue(_ error: String) {
@@ -677,19 +714,30 @@ struct ConnectionView: View {
 private struct SavedRemoteConnectionsSection: View {
     @ObservedObject var store: SavedRemoteConnectionStore
     let isRegular: Bool
+    let canStartRemoteAccess: Bool
     let connect: (SavedRemoteConnection) -> Void
+    @State private var renameTarget: SavedRemoteConnection?
 
     var body: some View {
         if !store.connections.isEmpty {
             content
+                .sheet(item: $renameTarget) { connection in
+                    RenameRemoteConnectionSheet(
+                        connection: connection,
+                        store: store,
+                        isRegular: isRegular
+                    )
+                    .presentationDetents([.height(isRegular ? 340 : 300)])
+                    .presentationDragIndicator(.visible)
+                }
         }
     }
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Saved Remote Access", systemImage: "bookmark")
+            Label("Saved Macs", systemImage: "bookmark")
                 .font(.subheadline.weight(.semibold))
-                .foregroundColor(.blue)
+                .foregroundColor(.primary)
                 .padding(.horizontal, 4)
 
             VStack(spacing: 0) {
@@ -697,7 +745,10 @@ private struct SavedRemoteConnectionsSection: View {
                     SavedRemoteConnectionRow(
                         connection: connection,
                         isRegular: isRegular,
+                        primaryActionTitle: canStartRemoteAccess ? "Connect" : "Unlock",
                         connect: { connect(connection) },
+                        rename: { renameTarget = connection },
+                        copyLink: { copyLink(connection) },
                         remove: { store.remove(connection) }
                     )
                     if index < store.connections.count - 1 {
@@ -708,6 +759,10 @@ private struct SavedRemoteConnectionsSection: View {
             .background(Color(.secondarySystemGroupedBackground))
             .cornerRadius(12)
         }
+    }
+
+    private func copyLink(_ connection: SavedRemoteConnection) {
+        UIPasteboard.general.string = connection.urlString
     }
 }
 
@@ -855,46 +910,144 @@ struct HostRow: View {
 private struct SavedRemoteConnectionRow: View {
     let connection: SavedRemoteConnection
     let isRegular: Bool
+    let primaryActionTitle: String
     let connect: () -> Void
+    let rename: () -> Void
+    let copyLink: () -> Void
     let remove: () -> Void
 
     var body: some View {
         HStack(spacing: isRegular ? 14 : 12) {
-            Button(action: connect) {
-                HStack(spacing: isRegular ? 14 : 12) {
-                    Image(systemName: "globe")
-                        .font(isRegular ? .title3 : .body)
-                        .foregroundColor(.blue)
-                        .frame(width: isRegular ? 34 : 28)
+            Image(systemName: "desktopcomputer")
+                .font(isRegular ? .title3 : .body)
+                .foregroundColor(.blue)
+                .frame(width: isRegular ? 34 : 28)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(connection.name)
-                            .font(isRegular ? .body.weight(.semibold) : .body.weight(.medium))
-                            .foregroundColor(.primary)
-                        Text(connection.urlString)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .foregroundColor(Color(UIColor.tertiaryLabel))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            Button(action: remove) {
-                Image(systemName: "trash")
-                    .font(.subheadline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(connection.name)
+                    .font(isRegular ? .body.weight(.semibold) : .body.weight(.medium))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                Text(connection.urlString)
+                    .font(.caption)
                     .foregroundColor(.secondary)
-                    .frame(width: 32, height: 32)
+                    .lineLimit(1)
+                Text("Remote")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundColor(.blue)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.blue.opacity(0.12))
+                    .clipShape(Capsule())
+            }
+
+            Spacer(minLength: 8)
+
+            Button(primaryActionTitle, action: connect)
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.borderedProminent)
+
+            Menu {
+                Button(action: rename) {
+                    Label("Rename", systemImage: "pencil")
+                }
+                Button(action: copyLink) {
+                    Label("Copy Link", systemImage: "doc.on.doc")
+                }
+                Button(role: .destructive, action: remove) {
+                    Label("Delete", systemImage: "trash")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(.blue)
+                    .frame(width: 36, height: 36)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Remove saved remote connection")
         }
         .padding(isRegular ? 14 : 12)
+    }
+}
+
+private struct RenameRemoteConnectionSheet: View {
+    let connection: SavedRemoteConnection
+    @ObservedObject var store: SavedRemoteConnectionStore
+    let isRegular: Bool
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var isNameFocused: Bool
+    @State private var name: String
+
+    init(connection: SavedRemoteConnection, store: SavedRemoteConnectionStore, isRegular: Bool) {
+        self.connection = connection
+        self.store = store
+        self.isRegular = isRegular
+        _name = State(initialValue: connection.name)
+    }
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canSave: Bool {
+        !trimmedName.isEmpty
+    }
+
+    var body: some View {
+        NavigationView {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Saved Mac Name")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Use a name you recognize, such as Home Mac or Office Mac.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                TextField("Remote Mac", text: $name)
+                    .textInputAutocapitalization(.words)
+                    .disableAutocorrection(true)
+                    .font(.body)
+                    .padding(isRegular ? 16 : 14)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .cornerRadius(12)
+                    .focused($isNameFocused)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Remote Link")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
+                    Text(connection.urlString)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(isRegular ? 24 : 20)
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .navigationTitle("Rename Mac")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        store.rename(connection, to: trimmedName)
+                        dismiss()
+                    }
+                    .disabled(!canSave)
+                }
+            }
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    isNameFocused = true
+                }
+            }
+        }
     }
 }

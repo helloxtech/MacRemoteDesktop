@@ -240,7 +240,11 @@ struct VNCRemoteDesktopView: View {
         HStack(spacing: 3) {
             ForEach(RemoteControlMode.allCases) { mode in
                 let selected = controlMode == mode
-                Button { controlMode = mode } label: {
+                Button {
+                    guard controlMode != mode else { return }
+                    controlMode = mode
+                    UISelectionFeedbackGenerator().selectionChanged()
+                } label: {
                     HStack(spacing: 4) {
                         Image(systemName: mode.iconName)
                             .font(.system(size: isRegular ? 13 : 11, weight: .semibold))
@@ -248,7 +252,7 @@ struct VNCRemoteDesktopView: View {
                             .font(.system(size: isRegular ? 12 : 10, weight: .semibold))
                     }
                     .foregroundColor(remoteButtonForeground(active: selected))
-                    .frame(minWidth: isRegular ? 76 : 62, minHeight: isRegular ? 38 : 32)
+                    .frame(minWidth: isRegular ? 76 : 68, minHeight: isRegular ? 44 : 44)
                     .padding(.horizontal, isRegular ? 4 : 3)
                     .background(remoteButtonFill(active: selected))
                     .overlay(
@@ -366,7 +370,7 @@ struct VNCRemoteDesktopView: View {
             Image(systemName: icon)
                 .font(.system(size: isRegular ? 17 : 13, weight: .semibold))
                 .foregroundColor(remoteButtonForeground(highlighted: highlight, enabled: enabled))
-                .frame(width: isRegular ? 46 : 36, height: isRegular ? 44 : 36)
+                .frame(width: isRegular ? 46 : 44, height: 44)
                 .background(remoteButtonFill(highlighted: highlight, enabled: enabled))
                 .overlay(
                     RoundedRectangle(cornerRadius: isRegular ? 10 : 8)
@@ -383,7 +387,7 @@ struct VNCRemoteDesktopView: View {
             Text(label)
                 .font(.system(size: isRegular ? 16 : 12, weight: .semibold))
                 .foregroundColor(remoteButtonForeground(enabled: enabled))
-                .frame(minWidth: isRegular ? 48 : 36, minHeight: isRegular ? 44 : 36)
+                .frame(minWidth: isRegular ? 48 : 44, minHeight: 44)
                 .padding(.horizontal, 2)
                 .background(remoteButtonFill(enabled: enabled))
                 .overlay(
@@ -402,7 +406,7 @@ struct VNCRemoteDesktopView: View {
             Text(symbol)
                 .font(.system(size: isRegular ? 20 : 15, weight: .semibold))
                 .foregroundColor(remoteButtonForeground(active: active, enabled: enabled))
-                .frame(width: isRegular ? 48 : 38, height: isRegular ? 44 : 36)
+                .frame(width: isRegular ? 48 : 44, height: 44)
                 .background(remoteButtonFill(active: active, enabled: enabled))
                 .overlay(
                     RoundedRectangle(cornerRadius: isRegular ? 10 : 8)

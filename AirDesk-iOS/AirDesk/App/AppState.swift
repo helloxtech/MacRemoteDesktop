@@ -144,6 +144,7 @@ class AppState: ObservableObject {
     @Published var activeVNCDisplayID: UInt32?
     @Published var pairingChallenge: PairingChallenge?
     @Published var remoteAccessPaywall: RemoteAccessPaywallPresentation?
+    @Published private(set) var hasCompletedMacCompanionSetup: Bool
     @Published private(set) var remoteAccessUsageRevision = UUID()
 
     let connectionDraft = ConnectionDraft()
@@ -158,6 +159,7 @@ class AppState: ObservableObject {
     private var remoteAccessSessionStartedAt: Date?
     private var remoteAccessLimitWorkItem: DispatchWorkItem?
     private var subscriptionPlanCancellable: AnyCancellable?
+    private static let macCompanionSetupCompleteKey = "airdesk.macCompanionSetupComplete.v1"
 
     // Keyed by displayIndex — fixes the single-handler overwrite bug for multi-monitor
     private var frameUpdateHandlers: [Int: (CVPixelBuffer) -> Void] = [:]
@@ -181,6 +183,7 @@ class AppState: ObservableObject {
     private var lastReportedLatency: Int = -1
 
     init() {
+        hasCompletedMacCompanionSetup = UserDefaults.standard.bool(forKey: Self.macCompanionSetupCompleteKey)
         frameDecoderStore.onFPSUpdate = { [weak self] fps in
             Task { @MainActor in self?.decodedFPS = fps }
         }
@@ -284,6 +287,7 @@ class AppState: ObservableObject {
                 self.pendingPairingRequest = nil
                 self.pairingChallenge = nil
                 self.connectionState = .connected
+                self.markMacCompanionSetupComplete()
                 if request.mode == .remoteAccess {
                     self.beginRemoteAccessUsageSessionIfNeeded()
                 }
@@ -424,6 +428,10 @@ class AppState: ObservableObject {
 
     func presentRemoteAccessPlans(reason: RemoteAccessPaywallPresentation.Reason = .subscriptionRequired) {
         remoteAccessPaywall = RemoteAccessPaywallPresentation(reason: reason)
+    }
+
+    func dismissMacCompanionSetupHint() {
+        markMacCompanionSetupComplete()
     }
 
     func canStartRemoteAccessNow() -> Bool {
@@ -723,6 +731,12 @@ class AppState: ObservableObject {
             pairingCode: request.pairingCode,
             name: request.host.name
         )
+    }
+
+    private func markMacCompanionSetupComplete() {
+        guard !hasCompletedMacCompanionSetup else { return }
+        hasCompletedMacCompanionSetup = true
+        UserDefaults.standard.set(true, forKey: Self.macCompanionSetupCompleteKey)
     }
 
     private func resetConnectionState(keepSelectedHost: Bool) {

@@ -46,15 +46,25 @@ struct SavedRemoteConnection: Identifiable, Codable, Equatable {
 
     private static func displayName(from name: String?, urlString: String) -> String {
         let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !trimmedName.isEmpty {
+        if !trimmedName.isEmpty && !Self.isEndpointName(trimmedName, urlString: urlString) {
             return trimmedName
+        }
+
+        return "Remote Mac"
+    }
+
+    private static func isEndpointName(_ name: String, urlString: String) -> Bool {
+        let lowercasedName = name.lowercased()
+        let lowercasedURL = urlString.lowercased()
+        if lowercasedName == lowercasedURL || lowercasedName.hasPrefix("http://") || lowercasedName.hasPrefix("https://") || lowercasedName.hasPrefix("ws://") || lowercasedName.hasPrefix("wss://") {
+            return true
         }
 
         let valueWithScheme = urlString.contains("://") ? urlString : "https://\(urlString)"
         if let host = URLComponents(string: valueWithScheme)?.host, !host.isEmpty {
-            return host
+            return lowercasedName == host.lowercased()
         }
-        return "Remote Mac"
+        return false
     }
 
     private static func normalizedPairingCode(_ value: String?) -> String? {
@@ -104,6 +114,22 @@ final class SavedRemoteConnectionStore: ObservableObject {
         persist()
     }
 
+    func rename(_ connection: SavedRemoteConnection, to name: String) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty,
+              let index = connections.firstIndex(where: { $0.id == connection.id }) else {
+            return
+        }
+
+        connections[index] = SavedRemoteConnection(
+            urlString: connection.urlString,
+            pairingCode: connection.pairingCode,
+            name: trimmedName,
+            lastUsedAt: connection.lastUsedAt
+        )
+        persist()
+    }
+
     private func persist() {
         guard let data = try? JSONEncoder().encode(connections) else { return }
         defaults.set(data, forKey: key)
@@ -114,6 +140,13 @@ final class SavedRemoteConnectionStore: ObservableObject {
               let connections = try? JSONDecoder().decode([SavedRemoteConnection].self, from: data) else {
             return []
         }
-        return connections
+        return connections.map { connection in
+            SavedRemoteConnection(
+                urlString: connection.urlString,
+                pairingCode: connection.pairingCode,
+                name: connection.name,
+                lastUsedAt: connection.lastUsedAt
+            )
+        }
     }
 }

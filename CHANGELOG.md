@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Bumped iOS to `1.2.10 (21)` and Mac to `1.2.12 (30)` for the saved Remote Access Mac UX update and automatic Mac-side HelloX Admin reports when an outdated or malformed iOS client attempts to connect.
+- Bumped iOS to `1.2.10 (22)` and Mac to `1.2.12 (30)` for the saved Remote Access Mac UX update and automatic Mac-side HelloX Admin reports when an outdated or malformed iOS client attempts to connect.
+- Rebuilt and resubmitted iOS build `22` with Xcode `26.5` / iOS SDK `26.5` to replace rejected build `21`.
 - Added Mac-side automatic HelloX Admin reports when Remote Access rejects an outdated or malformed iOS connect attempt, so old App Store client failures still produce server-side diagnostics even when the iOS app cannot submit its own report.
 - Improved the iOS Remote tab saved-connection UI: saved Remote Access entries now appear as friendly Saved Macs with Connect/Unlock actions, a `Rename` sheet, Copy Link, and Delete in the overflow menu instead of exposing only the raw tunnel URL and trash icon.
 - Bumped Mac to `1.2.11 (29)` and capped the streamed resolution at 1920px on the long edge (downscaling large displays such as a 3440x1440 ultrawide or 4K panels). Full-resolution frames were too large to stay live during scrolling and piled up in the network buffer, causing very high lag; the smaller frames keep scrolling responsive. Aspect ratio is preserved and the iPhone can still pinch-zoom for detail.
